@@ -1,0 +1,10 @@
+package com.example.cozy
+
+entity UserAccount
+entity UserProfile
+
+command CreateUser
+query GetUser
+
+operation CreateUserOp uses command CreateUser
+operation GetUserOp query GetUser
