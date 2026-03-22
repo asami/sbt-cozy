@@ -5,7 +5,7 @@
 ## Features
 
 - `.cml` / `.cozy` / `.dox` を読み込み
-- CML 定義を AST 化して Scala ソース生成
+- `cozy` の `modeler-scala` に委譲して Scala ソース生成（default backend）
 - CAR (`.car`) / SAR (`.sar`) アーカイブ生成
 - `manifest.json` を `meta/` に出力
 - `cozyPublishCAR` / `cozyPublishSAR` でローカルリポジトリへ配置
@@ -17,6 +17,9 @@
 - `cozyConfig`: 生成設定（default: `CozyConfig()`）
 - `cozySourceDir`: 入力ディレクトリ（default: `src/main/cozy`）
 - `cozyTargetDir`: 生成先（default: `Compile / sourceManaged`）
+- `cozyGeneratorBackend`: 生成バックエンド（`cozy` / `legacy`, default: `cozy`）
+- `cozyDelegateProjectDir`: 委譲先 `cozy` プロジェクトディレクトリ（`Option[File]`）
+- `cozyDelegateCommand`: 委譲時の実行コマンドプレフィックス（default: `Seq("sbt", "--batch")`）
 - `cozyGenerate`: 生成タスク
 
 `cozyConfig` options:
@@ -24,6 +27,8 @@
 - `generateDerivedAggregates`: `entity` から `<Entity>Aggregate` を自動生成（default: `true`）
 - `generateDerivedViews`: `entity` から `<Entity>View` を自動生成（default: `true`）
 - `packagePrefix`: CML の `package` へ付与する prefix（default: `None`）
+
+`cozyConfig` は `legacy` バックエンド専用です。`cozy` バックエンドでは `cozy` 側の生成設定に従います。
 
 ### Packaging
 
@@ -42,31 +47,17 @@ Tasks:
 - `cozyPublishCAR`: `cozyBuildCAR` の出力をローカルリポジトリへコピー
 - `cozyPublishSAR`: `cozyBuildSAR` の出力をローカルリポジトリへコピー
 
-## CML minimal syntax
+## Backend mode
 
-```txt
-package com.example.cozy
+`cozy` バックエンド（default）:
 
-entity UserAccount
-command CreateUser
-query GetUser
-operation CreateUserOp command CreateUser
-```
+- `cozyGenerate` は `cozy.Cozy modeler-scala` を実行し、生成済みScalaを `cozyTargetDir` へコピーする
+- `cozyDelegateProjectDir` 未指定時は環境変数 `SBT_COZY_PROJECT_DIR`、または既知候補ディレクトリを探索する
 
-Available declarations:
+`legacy` バックエンド:
 
-- `package <name>`
-- `entity <Name>`
-- `aggregate <Name>`
-- `view <Name>`
-- `command <Name>`
-- `query <Name>`
-- `event <Name>`
-- `operation <Name>`
-- `operation <Name> command <CommandName>`
-- `operation <Name> query <QueryName>`
-- `operation <Name> uses command <CommandName>`
-- `operation <Name> uses query <QueryName>`
+- 従来の `sbt-cozy` 内蔵パーサ/ジェネレータを使用する（互換用）
+- `cozyGeneratorBackend := "legacy"` で切替
 
 ## Artifact layout
 
@@ -129,6 +120,9 @@ Example settings:
 
 ```scala
 import org.goldenport.cozy.CozyConfig
+
+cozyGeneratorBackend := "cozy"
+cozyDelegateProjectDir := Some(file("/path/to/cozy"))
 
 cozyConfig := CozyConfig(
   generateDerivedAggregates = false,
