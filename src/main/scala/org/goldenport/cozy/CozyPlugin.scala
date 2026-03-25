@@ -784,7 +784,8 @@ private[cozy] object CozyDelegatedGenerator {
       val relative = relativeFromGeneratedRoot(generated)
       val destination = targetDir / normalizePath(relative)
       IO.createDirectory(destination.getParentFile)
-      IO.copyFile(generated, destination, preserveLastModified = true)
+      val content = injectCncfEntityImports(IO.read(generated), relative)
+      IO.write(destination, content)
       destination
     }
   }
@@ -808,6 +809,21 @@ private[cozy] object CozyDelegatedGenerator {
 
   private def isValidCozyProject(dir: File): Boolean =
     dir != null && dir.isDirectory && (dir / "build.sbt").isFile
+
+  private def injectCncfEntityImports(content: String, relativePath: String): String = {
+    if (!relativePath.startsWith("org/simplemodeling/textus/useraccount/entity/"))
+      content
+    else if (content.contains("import org.goldenport.cncf.entity.*"))
+      content
+    else {
+      val newline = if (content.contains("\r\n")) "\r\n" else "\n"
+      val lines = content.split("\\r?\\n", -1)
+      if (lines.headOption.exists(_.startsWith("package org.simplemodeling.textus.useraccount.entity")))
+        (Vector(lines.head, "", "import org.goldenport.cncf.entity.*") ++ lines.drop(1)).mkString(newline)
+      else
+        content
+    }
+  }
 
   private def cleanupPreviousGeneratedFiles(manifestFile: File): Unit = {
     if (manifestFile.isFile) {

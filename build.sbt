@@ -1,5 +1,5 @@
 ThisBuild / organization := "org.goldenport"
-ThisBuild / version := "0.1.0-SNAPSHOT"
+ThisBuild / version := "0.1.2-SNAPSHOT"
 
 lazy val root = (project in file("."))
   .settings(
