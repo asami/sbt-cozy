@@ -14,6 +14,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyGeneratorBackend = settingKey[String]("Generator backend. Either 'cozy' or 'legacy'.")
     val cozyDelegateProjectDir = settingKey[Option[File]]("Optional path to cozy project used by delegated generation.")
     val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation.")
+    val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
 
     val cozyPackaging = settingKey[String]("Default packaging target. Either 'car' or 'sar'.")
@@ -41,7 +42,13 @@ object CozyPlugin extends AutoPlugin {
     cozyTargetDir := (Compile / sourceManaged).value,
     cozyGeneratorBackend := sys.env.getOrElse("SBT_COZY_GENERATOR_BACKEND", "cozy"),
     cozyDelegateProjectDir := sys.env.get("SBT_COZY_PROJECT_DIR").map(file),
-    cozyDelegateCommand := Seq("sbt", "--batch"),
+    cozyDelegateCommand := Seq(
+      "sbt",
+      "--batch",
+      "-Dsbt.server.autostart=false",
+      "-Dsbt.supershell=false"
+    ),
+    cozySkipUnchangedGeneration := true,
 
     cozyPackaging := "car",
     cozyCarName := s"${moduleName.value}-${version.value}",
@@ -58,6 +65,7 @@ object CozyPlugin extends AutoPlugin {
       val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val delegateProjectDir = cozyDelegateProjectDir.value
       val delegateCommand = cozyDelegateCommand.value
+      val skipUnchanged = cozySkipUnchangedGeneration.value
       val log = streams.value.log
 
       CozyConfigValidator.validate(config) match {
@@ -70,12 +78,20 @@ object CozyPlugin extends AutoPlugin {
         log.debug(s"[sbt-cozy] no cozy sources found under ${sourceDir.getAbsolutePath}")
         Seq.empty
       } else {
+        val stateFile = target.value / "sbt-cozy" / "generation-state.properties"
+        val currentInputs = CozyGenerationState.capture(sourceDir, cozyFiles, backend, config)
+        val currentOutputs = CozyGenerationState.currentOutputs(targetDir)
+
+        if (skipUnchanged && CozyGenerationState.isUpToDate(stateFile, currentInputs, currentOutputs)) {
+          log.info(s"[sbt-cozy] skipped generation; CML timestamps unchanged (${currentOutputs.size} source(s) reused)")
+          currentOutputs
+        } else {
         backend match {
           case "cozy" =>
             if (config != CozyConfig.default) {
               log.warn("[sbt-cozy] cozy backend ignores cozyConfig options; using cozy modeler defaults")
             }
-            CozyDelegatedGenerator.generate(
+            val generated = CozyDelegatedGenerator.generate(
               sourceDir = sourceDir,
               cozyFiles = cozyFiles,
               targetDir = targetDir,
@@ -85,13 +101,17 @@ object CozyPlugin extends AutoPlugin {
               delegateCommand = delegateCommand,
               log = log
             )
+            CozyGenerationState.write(stateFile, currentInputs)
+            generated
           case "legacy" =>
             val model = parseValidatedModel(cozyFiles)
             val generated = CozyGenerator.generate(model, targetDir, config)
             log.info(s"[sbt-cozy] generated ${generated.size} Scala source(s) using legacy backend")
+            CozyGenerationState.write(stateFile, currentInputs)
             generated
           case other =>
             sys.error(s"[sbt-cozy] invalid cozyGeneratorBackend '${other}'. expected 'cozy' or 'legacy'")
+        }
         }
       }
     },
@@ -304,6 +324,106 @@ private[cozy] object CozyFileLoader {
         .sortBy(_.getAbsolutePath)
     }
   }
+}
+
+private[cozy] object CozyGenerationState {
+  private val StateVersion = "1"
+  private val InputPrefix = "input."
+
+  final case class Inputs(
+    backend: String,
+    packagePrefix: String,
+    generateDerivedAggregates: Boolean,
+    generateDerivedViews: Boolean,
+    files: Vector[(String, Long)]
+  )
+
+  def capture(sourceDir: File, cozyFiles: Seq[File], backend: String, config: CozyConfig): Inputs = {
+    val files = cozyFiles.map { path =>
+      CozyPackaging.relativePath(sourceDir, path).replace('\\', '/') -> path.lastModified()
+    }.toVector.sortBy(_._1)
+    Inputs(
+      backend = backend,
+      packagePrefix = config.packagePrefix.getOrElse(""),
+      generateDerivedAggregates = config.generateDerivedAggregates,
+      generateDerivedViews = config.generateDerivedViews,
+      files = files
+    )
+  }
+
+  def currentOutputs(targetDir: File): Seq[File] = {
+    val legacyGenerated = CozyGenerator.generatedFiles(targetDir)
+    val delegatedGenerated = CozyDelegatedGenerator.generatedFiles(targetDir)
+    (legacyGenerated ++ delegatedGenerated)
+      .groupBy(_.getAbsolutePath)
+      .values
+      .map(_.head)
+      .toVector
+      .sortBy(_.getAbsolutePath)
+  }
+
+  def isUpToDate(stateFile: File, currentInputs: Inputs, currentOutputs: Seq[File]): Boolean = {
+    read(stateFile).contains(currentInputs) &&
+    currentOutputs.nonEmpty &&
+    currentOutputs.forall(_.isFile)
+  }
+
+  def write(stateFile: File, inputs: Inputs): Unit = {
+    val properties = new java.util.Properties()
+    properties.setProperty("version", StateVersion)
+    properties.setProperty("backend", inputs.backend)
+    properties.setProperty("packagePrefix", inputs.packagePrefix)
+    properties.setProperty("generateDerivedAggregates", inputs.generateDerivedAggregates.toString)
+    properties.setProperty("generateDerivedViews", inputs.generateDerivedViews.toString)
+    properties.setProperty("input.count", inputs.files.size.toString)
+    inputs.files.zipWithIndex.foreach {
+      case ((path, timestamp), index) =>
+        properties.setProperty(s"${InputPrefix}${index}.path", path)
+        properties.setProperty(s"${InputPrefix}${index}.timestamp", timestamp.toString)
+    }
+
+    IO.createDirectory(stateFile.getParentFile)
+    val out = new java.io.FileOutputStream(stateFile)
+    try properties.store(out, "Generated by sbt-cozy")
+    finally out.close()
+  }
+
+  private def read(stateFile: File): Option[Inputs] = {
+    if (!stateFile.isFile) {
+      None
+    } else {
+      val properties = new java.util.Properties()
+      val in = new java.io.FileInputStream(stateFile)
+      try properties.load(in)
+      finally in.close()
+
+      if (properties.getProperty("version") != StateVersion) {
+        None
+      } else {
+        val count = Option(properties.getProperty("input.count")).flatMap(parseInt).getOrElse(0)
+        val files = Vector.tabulate(count) { index =>
+          val path = properties.getProperty(s"${InputPrefix}${index}.path")
+          val timestamp = properties.getProperty(s"${InputPrefix}${index}.timestamp")
+          path -> timestamp.toLong
+        }
+        Some(
+          Inputs(
+            backend = properties.getProperty("backend", ""),
+            packagePrefix = properties.getProperty("packagePrefix", ""),
+            generateDerivedAggregates = properties.getProperty("generateDerivedAggregates", "true").toBoolean,
+            generateDerivedViews = properties.getProperty("generateDerivedViews", "true").toBoolean,
+            files = files
+          )
+        )
+      }
+    }
+  }
+
+  private def parseInt(value: String): Option[Int] =
+    try Some(value.toInt)
+    catch {
+      case _: NumberFormatException => None
+    }
 }
 
 private[cozy] final case class SourceLocation(file: File, line: Int) {
@@ -550,6 +670,11 @@ private[cozy] object CozyGenerator {
   private val OwnershipMarker = "Generated by sbt-cozy"
   private val Sections = Seq("entity", "aggregate", "view", "command", "query", "operation")
 
+  def generatedFiles(targetDir: File): Seq[File] =
+    Sections.flatMap(section => ((targetDir / section) ** "*.scala").get)
+      .filter(isOwned)
+      .sortBy(_.getAbsolutePath)
+
   def generate(model: CozyModel, targetDir: File, config: CozyConfig): Seq[File] = {
     val basePackage = config.applyPackagePrefix(model.packageName)
 
@@ -667,9 +792,7 @@ ${body}
   }
 
   private def deleteOwnedFiles(targetDir: File): Unit = {
-    val candidates = Sections.flatMap(section => ((targetDir / section) ** "*.scala").get)
-    val ownedFiles = candidates.filter(isOwned)
-    IO.delete(ownedFiles)
+    IO.delete(generatedFiles(targetDir))
   }
 
   private def isOwned(path: File): Boolean = {
@@ -685,6 +808,9 @@ ${body}
 private[cozy] object CozyDelegatedGenerator {
   private val ManifestRelativePath = "sbt-cozy/generated-files.txt"
   private val SourceMarker = "/src_managed/main/scala/"
+
+  def generatedFiles(targetDir: File): Seq[File] =
+    (targetDir ** "*.scala").get.filter(_.isFile).sortBy(_.getAbsolutePath)
 
   def generate(
     sourceDir: File,

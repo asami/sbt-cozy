@@ -20,6 +20,7 @@
 - `cozyGeneratorBackend`: 生成バックエンド（`cozy` / `legacy`, default: `cozy`）
 - `cozyDelegateProjectDir`: 委譲先 `cozy` プロジェクトディレクトリ（`Option[File]`）
 - `cozyDelegateCommand`: 委譲時の実行コマンドプレフィックス（default: `Seq("sbt", "--batch")`）
+- `cozySkipUnchangedGeneration`: CML のタイムスタンプと生成設定が変わらない場合は再生成を抑止（default: `true`）
 - `cozyGenerate`: 生成タスク
 
 `cozyConfig` options:
@@ -29,6 +30,8 @@
 - `packagePrefix`: CML の `package` へ付与する prefix（default: `None`）
 
 `cozyConfig` は `legacy` バックエンド専用です。`cozy` バックエンドでは `cozy` 側の生成設定に従います。
+
+`cozySkipUnchangedGeneration := true` の場合、`target/sbt-cozy/generation-state.properties` に入力 CML の相対パスとタイムスタンプ、backend、生成設定を記録し、差分がなければ既存 Scala を再利用します。
 
 ### Packaging
 
@@ -123,6 +126,7 @@ import org.goldenport.cozy.CozyConfig
 
 cozyGeneratorBackend := "cozy"
 cozyDelegateProjectDir := Some(file("/path/to/cozy"))
+cozySkipUnchangedGeneration := true
 
 cozyConfig := CozyConfig(
   generateDerivedAggregates = false,
