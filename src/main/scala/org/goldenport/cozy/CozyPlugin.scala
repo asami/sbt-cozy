@@ -822,7 +822,6 @@ private[cozy] object CozyDelegatedGenerator {
     delegateCommand: Seq[String],
     log: Logger
   ): Seq[File] = {
-    val cozyDir = resolveDelegateProjectDir(baseDir, delegateProjectDir)
     val workDir = targetBaseDir / "sbt-cozy" / "delegate-work"
     val manifestFile = targetBaseDir / ManifestRelativePath
 
@@ -838,7 +837,8 @@ private[cozy] object CozyDelegatedGenerator {
           runIndex = index,
           targetDir = targetDir,
           workDir = workDir,
-          cozyProjectDir = cozyDir,
+          baseDir = baseDir,
+          delegateProjectDir = delegateProjectDir,
           delegateCommand = delegateCommand,
           log = log
         )
@@ -866,21 +866,26 @@ private[cozy] object CozyDelegatedGenerator {
     runIndex: Int,
     targetDir: File,
     workDir: File,
-    cozyProjectDir: File,
+    baseDir: File,
+    delegateProjectDir: Option[File],
     delegateCommand: Seq[String],
     log: Logger
   ): Seq[File] = {
     val saveDir = workDir / s"run-${runIndex}"
     IO.createDirectory(saveDir)
-
-    val runMainCommand =
-      s"runMain cozy.Cozy modeler-scala ${source.getAbsolutePath} --save=${saveDir.getAbsolutePath}"
-    val command = delegateCommand :+ runMainCommand
+    val delegate = resolveDelegateExecution(
+      baseDir = baseDir,
+      explicitProjectDir = delegateProjectDir,
+      delegateCommand = delegateCommand,
+      source = source,
+      saveDir = saveDir
+    )
+    val command = delegate.command
 
     log.info(s"[sbt-cozy] delegate to cozy: ${source.getAbsolutePath}")
     val outLines = scala.collection.mutable.ArrayBuffer.empty[String]
     val errLines = scala.collection.mutable.ArrayBuffer.empty[String]
-    val exit = Process(command, cozyProjectDir).!(ProcessLogger(
+    val exit = Process(command, delegate.cwd).!(ProcessLogger(
       out => {
         outLines += out
         log.debug(s"[sbt-cozy/cozy] $out")
@@ -895,7 +900,7 @@ private[cozy] object CozyDelegatedGenerator {
       val message =
         s"""[sbt-cozy] cozy delegate failed (${exit}) for ${source.getAbsolutePath}
            |[sbt-cozy] command: ${command.mkString(" ")}
-           |[sbt-cozy] cwd: ${cozyProjectDir.getAbsolutePath}
+           |[sbt-cozy] cwd: ${delegate.cwd.getAbsolutePath}
            |[sbt-cozy] recent logs:
            |${details}""".stripMargin
       sys.error(message)
@@ -915,6 +920,40 @@ private[cozy] object CozyDelegatedGenerator {
       destination
     }
   }
+
+  private case class DelegateExecution(cwd: File, command: Seq[String])
+
+  private def resolveDelegateExecution(
+    baseDir: File,
+    explicitProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    source: File,
+    saveDir: File
+  ): DelegateExecution = {
+    val commandPrefix = delegateCommand match {
+      case Seq() =>
+        sys.error("[sbt-cozy] cozy delegate command is empty.")
+      case xs => xs
+    }
+    if (usesProjectDelegate(explicitProjectDir, commandPrefix)) {
+      val cozyDir = resolveDelegateProjectDir(baseDir, explicitProjectDir)
+      val runMainCommand =
+        s"runMain cozy.Cozy modeler-scala ${source.getAbsolutePath} --save=${saveDir.getAbsolutePath}"
+      DelegateExecution(cozyDir, commandPrefix :+ runMainCommand)
+    } else {
+      DelegateExecution(
+        cwd = baseDir,
+        command = commandPrefix ++ Seq(
+          "modeler-scala",
+          source.getAbsolutePath,
+          s"--save=${saveDir.getAbsolutePath}"
+        )
+      )
+    }
+  }
+
+  private def usesProjectDelegate(explicitProjectDir: Option[File], delegateCommand: Seq[String]): Boolean =
+    explicitProjectDir.nonEmpty || delegateCommand.headOption.contains("sbt")
 
   private def resolveDelegateProjectDir(baseDir: File, explicit: Option[File]): File = {
     val home = file(System.getProperty("user.home"))
