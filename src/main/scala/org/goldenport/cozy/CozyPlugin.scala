@@ -16,6 +16,8 @@ object CozyPlugin extends AutoPlugin {
     val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
+    val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
+    val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare runtime classpath file.")
 
     val cozyPackaging = settingKey[String]("Default packaging target. Either 'car' or 'sar'.")
     val cozyCarName = settingKey[String]("Base file name of the generated CAR archive")
@@ -245,6 +247,23 @@ object CozyPlugin extends AutoPlugin {
       IO.copyFile(archive, destination, preserveLastModified = true)
       streams.value.log.info(s"[sbt-cozy] published SAR to ${destination.getAbsolutePath}")
       destination
+    },
+
+    cozyRuntimeClasspathFile := {
+      val out = target.value / "cncf.d" / "runtime-classpath.txt"
+      val classpath = (Compile / fullClasspath).value
+        .map(_.data.getAbsoluteFile)
+        .distinct
+        .map(_.getAbsolutePath)
+      IO.createDirectory(out.getParentFile)
+      IO.writeLines(out, classpath)
+      streams.value.log.info(s"[sbt-cozy] wrote runtime classpath file: ${out.getAbsolutePath}")
+      out
+    },
+
+    cozyPrepareRuntime := {
+      val _ = (Compile / compile).value
+      cozyRuntimeClasspathFile.value
     },
 
     Compile / sourceGenerators += cozyGenerate.taskValue
