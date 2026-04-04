@@ -974,21 +974,41 @@ private[cozy] object CozyDelegatedGenerator {
   private def usesProjectDelegate(explicitProjectDir: Option[File], delegateCommand: Seq[String]): Boolean =
     explicitProjectDir.nonEmpty || delegateCommand.headOption.contains("sbt")
 
-  private def resolveDelegateProjectDir(baseDir: File, explicit: Option[File]): File = {
+  private[cozy] def resolveDelegateProjectDir(baseDir: File, explicit: Option[File]): File = {
     val home = file(System.getProperty("user.home"))
-    val candidates = Vector(
-      baseDir.getParentFile / "cozy",
-      home / "src" / "dev2025" / "cozy",
-      home / "src" / "dev2026" / "cozy"
-    )
+    val candidates = candidateDelegateProjectDirs(baseDir, home)
 
     val resolved = explicit.orElse(candidates.find(isValidCozyProject))
     resolved.filter(isValidCozyProject).getOrElse {
       sys.error(
         "[sbt-cozy] cozy project directory is not configured. " +
-        "Set cozyDelegateProjectDir or SBT_COZY_PROJECT_DIR."
+        "Place cozy in the same repository/workspace, or set cozyDelegateProjectDir / SBT_COZY_PROJECT_DIR."
       )
     }
+  }
+
+  private[cozy] def candidateDelegateProjectDirs(baseDir: File, home: File): Vector[File] = {
+    val parent = Option(baseDir.getParentFile)
+    val repoCandidates = parent.toVector.flatMap { dir =>
+      Vector(
+        dir / "cozy",
+        dir / "cncf" / "cozy",
+        dir / "modules" / "cozy",
+        dir / "tools" / "cozy"
+      )
+    }
+    val localCandidates = Vector(
+      baseDir / "cozy",
+      baseDir / "modules" / "cozy",
+      baseDir / "tools" / "cozy",
+      home / "src" / "dev2025" / "cozy",
+      home / "src" / "dev2026" / "cozy"
+    )
+    (repoCandidates ++ localCandidates)
+      .filter(_ != null)
+      .foldLeft(Vector.empty[File]) { (acc, candidate) =>
+        if (acc.exists(_.getAbsolutePath == candidate.getAbsolutePath)) acc else acc :+ candidate
+      }
   }
 
   private def isValidCozyProject(dir: File): Boolean =

@@ -231,6 +231,42 @@ final class CozyGenerationStateSpec extends CozyTestBase {
   }
 }
 
+final class CozyDelegatedGeneratorSpec extends CozyTestBase {
+  test("prefers same-workspace cozy candidates before home fallback") {
+    withTempDir("sbt-cozy-delegate") { dir =>
+      val baseDir = dir / "repo" / "sbt-cozy"
+      val homeDir = dir / "home"
+      IO.createDirectory(baseDir)
+
+      val candidates = CozyDelegatedGenerator.candidateDelegateProjectDirs(baseDir, homeDir)
+      val expectedPrefix = Vector(
+        dir / "repo" / "cozy",
+        dir / "repo" / "cncf" / "cozy",
+        dir / "repo" / "modules" / "cozy",
+        dir / "repo" / "tools" / "cozy",
+        baseDir / "cozy",
+        baseDir / "modules" / "cozy",
+        baseDir / "tools" / "cozy"
+      ).map(_.getAbsolutePath)
+
+      assert(candidates.take(expectedPrefix.size).map(_.getAbsolutePath) == expectedPrefix)
+      assert(candidates.lastOption.exists(_.getAbsolutePath.endsWith("/src/dev2026/cozy")))
+    }
+  }
+
+  test("resolves explicit same-repo cozy project") {
+    withTempDir("sbt-cozy-delegate") { dir =>
+      val baseDir = dir / "repo" / "sbt-cozy"
+      val cozyDir = dir / "repo" / "cozy"
+      IO.createDirectory(baseDir)
+      write(cozyDir / "build.sbt", """name := "cozy"""")
+
+      val resolved = CozyDelegatedGenerator.resolveDelegateProjectDir(baseDir, None)
+      assert(resolved.getAbsolutePath == cozyDir.getAbsolutePath)
+    }
+  }
+}
+
 final class CozyPackagingSpec extends CozyTestBase {
   test("buildCar produces required CAR layout") {
     withTempDir("sbt-cozy-car") { dir =>
