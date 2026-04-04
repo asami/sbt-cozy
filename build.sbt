@@ -1,5 +1,23 @@
 ThisBuild / organization := "org.goldenport"
-ThisBuild / version := "0.1.2-SNAPSHOT"
+ThisBuild / version := "0.1.2"
+ThisBuild / description := "sbt plugin for cozy/CML Scala source generation and CAR/SAR packaging"
+
+ThisBuild / publishArtifact := true
+ThisBuild / publishMavenStyle := true
+ThisBuild / pomIncludeRepository := { _ => false }
+
+ThisBuild / publishTo := {
+  val repo = sys.env.get("SIMPLEMODELING_MAVEN_LOCAL")
+    .map(file)
+    .getOrElse(baseDirectory.value / "maven-local")
+
+  Some(
+    Resolver.file(
+      "local-simplemodeling-maven",
+      repo
+    )
+  )
+}
 
 lazy val root = (project in file("."))
   .settings(
