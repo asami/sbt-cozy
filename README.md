@@ -5,9 +5,9 @@
 ## Features
 
 - Load `.cml`, `.cozy`, and `.dox` files
-- Generate Scala sources via `cozy`'s `modeler-scala` backend by default
+- Generate Scala sources via `cozy` through `sbt-bridge v1` by default
 - Build CAR (`.car`) and SAR (`.sar`) archives
-- Write `manifest.json` under `meta/`
+- Use descriptor-first CAR/SAR packaging
 - Publish CAR/SAR artifacts into a local repository with `cozyPublishCAR` and `cozyPublishSAR`
 
 ## Plugin Keys
@@ -18,8 +18,8 @@
 - `cozySourceDir`: input directory (`src/main/cozy` by default)
 - `cozyTargetDir`: generation target (`Compile / sourceManaged` by default)
 - `cozyGeneratorBackend`: generator backend (`cozy` or `legacy`, default: `cozy`)
-- `cozyDelegateProjectDir`: optional path to the delegated `cozy` project
-- `cozyDelegateCommand`: command prefix used for delegated generation (default: `Seq("sbt", "--batch")`)
+- `cozyDelegateProjectDir`: optional path to the delegated `cozy` project during development
+- `cozyDelegateCommand`: command prefix used for delegated generation and packaging (default: `Seq("cozy")`)
 - `cozySkipUnchangedGeneration`: skips regeneration when CML timestamps and generator settings are unchanged (default: `true`)
 - `cozyGenerate`: generation task
 
@@ -40,7 +40,7 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 - `cozySarName`: base file name of the generated SAR archive (default: `${moduleName}-${version}`)
 - `cozySpiJars`: additional JARs included under `spi/` in CAR
 - `cozySarExtensionJars`: additional JARs included under `extension/` in SAR
-- `cozyManifestMetadata`: extra metadata entries written into `manifest.json`
+- `cozyManifestMetadata`: extra metadata passed to `cozy` packaging
 - `cozyLocalRepositoryDir`: destination directory for `cozyPublish*` tasks (default: `target/cozy-repository`)
 
 Tasks:
@@ -54,10 +54,10 @@ Tasks:
 
 `cozy` backend (default):
 
-- `cozyGenerate` runs `cozy.Cozy modeler-scala` and copies generated Scala sources into `cozyTargetDir`
-- if `cozyDelegateProjectDir` is not set, `sbt-cozy` first checks `SBT_COZY_PROJECT_DIR`
-- if that is also unset, it searches same-workspace candidates first: `../cozy`, `../cncf/cozy`, `../modules/cozy`, `../tools/cozy`
-- the older `~/src/dev20xx/cozy` lookup remains as a backward-compatible fallback
+- `sbt-cozy` invokes `cozy sbt-bridge v1 --request=...`
+- `sbt-cozy` does not call `modeler-scala` / `package-car` / `package-sar` directly
+- the bridge request is the stable integration contract
+- when `cozyDelegateProjectDir` is set, `sbt-cozy` runs `runMain cozy.Cozy` in that repo instead of the installed `cozy` command
 
 `legacy` backend:
 
@@ -68,24 +68,18 @@ Tasks:
 
 ### CAR
 
+- `component-descriptor.json`
 - `component/main.jar`
 - `lib/*.jar`
 - `spi/*.jar`
 - `config/default.conf`
 - `docs/*.md`
-- `meta/manifest.json`
 
 ### SAR
 
-- `subsystem/*.cml` with original relative paths preserved
+- subsystem descriptor or subsystem source files at archive top level with original relative paths preserved
 - `extension/*.jar`
 - `config/application.conf`
-- `meta/manifest.json`
-
-Precedence contract in `manifest.json`:
-
-- extension: `SAR > CAR`
-- config: `SAR > CAR`
 
 ## Usage
 
@@ -95,7 +89,7 @@ Precedence contract in `manifest.json`:
 resolvers += Resolver.defaultLocal
 resolvers += Resolver.mavenLocal
 
-addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.2")
+addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.3-SNAPSHOT")
 ```
 
 `build.sbt`:
@@ -145,4 +139,7 @@ cozyManifestMetadata ++= Map(
 )
 ```
 
-If `sbt-cozy` is placed in the same workspace as `cozy`, the plugin resolves the local `cozy` module automatically without additional configuration.
+Recommended usage:
+
+- normal use: install/update the `cozy` command and let `sbt-cozy` call it directly
+- development against an in-progress `cozy` repo: set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))`

@@ -232,135 +232,97 @@ final class CozyGenerationStateSpec extends CozyTestBase {
 }
 
 final class CozyDelegatedGeneratorSpec extends CozyTestBase {
-  test("prefers same-workspace cozy candidates before home fallback") {
+  test("bridge uses direct cozy command by default") {
     withTempDir("sbt-cozy-delegate") { dir =>
-      val baseDir = dir / "repo" / "sbt-cozy"
-      val homeDir = dir / "home"
-      IO.createDirectory(baseDir)
-
-      val candidates = CozyDelegatedGenerator.candidateDelegateProjectDirs(baseDir, homeDir)
-      val expectedPrefix = Vector(
-        dir / "repo" / "cozy",
-        dir / "repo" / "cncf" / "cozy",
-        dir / "repo" / "modules" / "cozy",
-        dir / "repo" / "tools" / "cozy",
-        baseDir / "cozy",
-        baseDir / "modules" / "cozy",
-        baseDir / "tools" / "cozy"
-      ).map(_.getAbsolutePath)
-
-      assert(candidates.take(expectedPrefix.size).map(_.getAbsolutePath) == expectedPrefix)
-      assert(candidates.lastOption.exists(_.getAbsolutePath.endsWith("/src/dev2026/cozy")))
+      val source = write(dir / "src" / "model.cml", "package app\nentity User\n")
+      val saveDir = dir / "out"
+      val (cwd, resolved) = CozySbtBridge.resolveForTest(
+        baseDir = dir,
+        delegateProjectDir = None,
+        delegateCommand = Seq("cozy"),
+        action = "generate",
+        arguments = Vector("modeler-scala", source.getAbsolutePath, s"--save=${saveDir.getAbsolutePath}")
+      )
+      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
+      assert(resolved.head == "cozy")
+      assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
+      assert(resolved.last.startsWith("--request="))
     }
   }
 
-  test("resolves explicit same-repo cozy project") {
+  test("bridge uses explicit cozy project during development") {
     withTempDir("sbt-cozy-delegate") { dir =>
-      val baseDir = dir / "repo" / "sbt-cozy"
-      val cozyDir = dir / "repo" / "cozy"
-      IO.createDirectory(baseDir)
+      val cozyDir = dir / "cozy"
       write(cozyDir / "build.sbt", """name := "cozy"""")
-
-      val resolved = CozyDelegatedGenerator.resolveDelegateProjectDir(baseDir, None)
-      assert(resolved.getAbsolutePath == cozyDir.getAbsolutePath)
+      val (cwd, resolved) = CozySbtBridge.resolveForTest(
+        baseDir = dir,
+        delegateProjectDir = Some(cozyDir),
+        delegateCommand = Seq("cozy"),
+        action = "package-sar",
+        arguments = Vector("--save=/tmp/sample.sar")
+      )
+      assert(cwd.getAbsolutePath == cozyDir.getAbsolutePath)
+      assert(resolved.take(4) == Seq("sbt", "--batch", "-Dsbt.server.autostart=false", "-Dsbt.supershell=false"))
+      assert(resolved.last.startsWith("runMain cozy.Cozy "))
     }
   }
 }
 
+final class CozyManifestMetadataSpec extends CozyTestBase {
+  test("componentlet metadata is packed into descriptor JSON") {
+    val metadata = Map(
+      "component" -> "sample-component",
+      "boundedContext" -> "default",
+      "componentlets" -> "public-notice,notice-admin",
+      "componentlet.public-notice.kind" -> "componentlet",
+      "componentlet.public-notice.isPrimary" -> "false",
+      "componentlet.notice-admin.kind" -> "componentlet"
+    )
+
+    val result = CozyManifestMetadata.from(metadata, "sample")
+
+    assert(result.component == "sample-component")
+    assert(result.config.isEmpty)
+    assert(result.extensions.get("boundedContext").contains("default"))
+    assert(result.extensions.get("componentlets").isEmpty)
+    val descriptor = result.extensions.getOrElse("componentDescriptorJson", fail("missing descriptor JSON"))
+    assert(descriptor.contains("\"component\":{\"name\":\"sample-component\",\"boundedContext\":\"default\"}"))
+    assert(descriptor.contains("\"componentlets\":["))
+    assert(descriptor.contains("\"name\":\"notice-admin\""))
+    assert(descriptor.contains("\"name\":\"public-notice\""))
+    assert(descriptor.contains("\"kind\":\"componentlet\""))
+    assert(descriptor.contains("\"isPrimary\":\"false\""))
+  }
+}
+
 final class CozyPackagingSpec extends CozyTestBase {
-  test("buildCar produces required CAR layout") {
-    withTempDir("sbt-cozy-car") { dir =>
-      val mainJar = write(dir / "artifacts" / "main.jar", "main")
-      val libJar = write(dir / "artifacts" / "dep.jar", "dep")
-      val spiJar = write(dir / "artifacts" / "spi.jar", "spi")
-      val defaultConf = write(dir / "conf" / "default.conf", "service.timeout=10")
-      val doc = write(dir / "docs" / "guide" / "intro.md", "# intro")
-
-      val manifest = CozyPackaging.renderManifest(
-        CozyPackaging.ManifestPayload(
-          packaging = "car",
-          name = "sample-component",
-          module = "sample",
-          version = "0.1.0",
-          scalaBinaryVersion = "2.12",
-          generatedAt = "2026-03-22T00:00:00Z",
-          packageName = Some("com.example"),
-          entities = Vector("Person"),
-          aggregates = Vector("PersonAggregate"),
-          views = Vector("PersonView"),
-          commands = Vector("SavePerson"),
-          queries = Vector("GetPerson"),
-          events = Vector("PersonCreated"),
-          operations = Vector("SavePersonOp"),
-          precedence = Map("extension" -> "SAR > CAR", "config" -> "SAR > CAR"),
-          extra = Map("cozyPackaging" -> "car")
-        )
-      )
-
-      val archive = dir / "out" / "sample-component.car"
-      CozyPackaging.buildCar(
-        archive = archive,
-        mainJar = mainJar,
-        libJars = Seq(libJar),
-        spiJars = Seq(spiJar),
-        defaultConf = Some(defaultConf),
-        docsFiles = Seq(doc -> "guide/intro.md"),
-        manifestJson = manifest
-      )
-
-      val entries = zipEntries(archive)
-      assert(entries.contains("component/main.jar"))
-      assert(entries.contains("lib/dep.jar"))
-      assert(entries.contains("spi/spi.jar"))
-      assert(entries.contains("config/default.conf"))
-      assert(entries.contains("docs/guide/intro.md"))
-      assert(entries.contains("meta/manifest.json"))
+  test("loadSarSources accepts descriptor-only subsystem definition") {
+    withTempDir("sbt-cozy-sar-descriptor") { dir =>
+      val descriptor = write(dir / "subsystem-descriptor.yaml", "subsystem: textus-identity")
+      val files = CozyFileLoader.loadSarSources(dir)
+      assert(files == Seq(descriptor))
     }
   }
 
-  test("buildSar produces required SAR layout and precedence metadata") {
-    withTempDir("sbt-cozy-sar") { dir =>
-      val subsystem = write(dir / "cozy" / "identity" / "subsystem.cml", "entity Person")
-      val extension = write(dir / "ext" / "grpc.jar", "grpc")
-      val appConf = write(dir / "conf" / "application.conf", "env=dev")
-
-      val manifest = CozyPackaging.renderManifest(
-        CozyPackaging.ManifestPayload(
-          packaging = "sar",
-          name = "sample-subsystem",
-          module = "sample",
-          version = "0.1.0",
-          scalaBinaryVersion = "2.12",
-          generatedAt = "2026-03-22T00:00:00Z",
-          packageName = Some("com.example"),
-          entities = Vector("Person"),
-          aggregates = Vector.empty,
-          views = Vector.empty,
-          commands = Vector.empty,
-          queries = Vector.empty,
-          events = Vector.empty,
-          operations = Vector.empty,
-          precedence = Map("extension" -> "SAR > CAR", "config" -> "SAR > CAR"),
-          extra = Map("cozyPackaging" -> "sar")
+  test("packageSar delegates descriptor paths to cozy CLI arguments") {
+    withTempDir("sbt-cozy-sar-delegate") { dir =>
+      val archive = dir / "out" / "sample.sar"
+      val command = Seq("cozy")
+      val (cwd, resolved) = CozySbtBridge.resolveForTest(
+        baseDir = dir,
+        delegateProjectDir = None,
+        delegateCommand = command,
+        action = "package-sar",
+        arguments = Vector(
+          s"--save=${archive.getAbsolutePath}",
+          s"--source-dir=${(dir / "src").getAbsolutePath}",
+          "--source-files=subsystem-descriptor.yaml"
         )
       )
-
-      val archive = dir / "out" / "sample-subsystem.sar"
-      CozyPackaging.buildSar(
-        archive = archive,
-        subsystemSources = Seq(subsystem -> "identity/subsystem.cml"),
-        extensionJars = Seq(extension),
-        applicationConf = Some(appConf),
-        manifestJson = manifest
-      )
-
-      val entries = zipEntries(archive)
-      assert(entries.contains("subsystem/identity/subsystem.cml"))
-      assert(entries.contains("extension/grpc.jar"))
-      assert(entries.contains("config/application.conf"))
-      assert(entries.contains("meta/manifest.json"))
-      assert(manifest.contains("\"extension\": \"SAR > CAR\""))
-      assert(manifest.contains("\"config\": \"SAR > CAR\""))
+      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
+      assert(resolved.head == "cozy")
+      assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
+      assert(resolved.last.startsWith("--request="))
     }
   }
 }

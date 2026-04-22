@@ -1,6 +1,8 @@
 package org.goldenport.cozy
 
 import java.time.Instant
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 
 import sbt._
 import sbt.Keys._
@@ -12,8 +14,11 @@ object CozyPlugin extends AutoPlugin {
     val cozySourceDir = settingKey[File]("Directory containing CML/cozy sources")
     val cozyTargetDir = settingKey[File]("Directory where Scala sources are generated")
     val cozyGeneratorBackend = settingKey[String]("Generator backend. Either 'cozy' or 'legacy'.")
-    val cozyDelegateProjectDir = settingKey[Option[File]]("Optional path to cozy project used by delegated generation.")
-    val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation.")
+    val cozyDelegateProjectDir = settingKey[Option[File]]("Optional path to cozy project used by delegated generation during development.")
+    val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation and packaging.")
+    val cozyCncfVersion = settingKey[String]("CNCF version propagated to delegated cozy generation and generated CAR project build files.")
+    val cozySimpleModelingModelVersion = settingKey[String]("simplemodeling-model version propagated to delegated cozy generation and generated CAR project build files.")
+    val cozyCncfCollaboratorApiVersion = settingKey[String]("cncf-collaborator-api version propagated to delegated cozy generation and generated CAR project build files.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
@@ -31,6 +36,9 @@ object CozyPlugin extends AutoPlugin {
     val cozyBuildSAR = taskKey[File]("Build SAR archive from cozy source definitions")
     val cozyPublishCAR = taskKey[File]("Copy CAR archive to cozy local repository")
     val cozyPublishSAR = taskKey[File]("Copy SAR archive to cozy local repository")
+    val cozyAppName = settingKey[String]("Application name used by cozyScaffoldApp.")
+    val cozyAppRootDir = settingKey[File]("Target directory where cozyScaffoldApp writes the application scaffold.")
+    val cozyScaffoldApp = taskKey[Seq[File]]("Generate an application root scaffold with component/ and subsystem/ modules.")
   }
 
   import autoImport._
@@ -44,12 +52,10 @@ object CozyPlugin extends AutoPlugin {
     cozyTargetDir := (Compile / sourceManaged).value,
     cozyGeneratorBackend := sys.env.getOrElse("SBT_COZY_GENERATOR_BACKEND", "cozy"),
     cozyDelegateProjectDir := sys.env.get("SBT_COZY_PROJECT_DIR").map(file),
-    cozyDelegateCommand := Seq(
-      "sbt",
-      "--batch",
-      "-Dsbt.server.autostart=false",
-      "-Dsbt.supershell=false"
-    ),
+    cozyDelegateCommand := Seq("cozy"),
+    cozyCncfVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "goldenport-cncf").getOrElse("0.4.2-SNAPSHOT"),
+    cozySimpleModelingModelVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.simplemodeling", "simplemodeling-model").getOrElse("0.1.2-SNAPSHOT"),
+    cozyCncfCollaboratorApiVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "cncf-collaborator-api").getOrElse("0.1.0-SNAPSHOT"),
     cozySkipUnchangedGeneration := true,
 
     cozyPackaging := "car",
@@ -59,6 +65,8 @@ object CozyPlugin extends AutoPlugin {
     cozySarExtensionJars := Seq.empty,
     cozyManifestMetadata := Map.empty,
     cozyLocalRepositoryDir := target.value / "cozy-repository",
+    cozyAppName := moduleName.value,
+    cozyAppRootDir := baseDirectory.value / cozyAppName.value,
 
     cozyGenerate := {
       val sourceDir = cozySourceDir.value
@@ -67,6 +75,11 @@ object CozyPlugin extends AutoPlugin {
       val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val delegateProjectDir = cozyDelegateProjectDir.value
       val delegateCommand = cozyDelegateCommand.value
+      val dependencyVersions = CozyDependencyVersions(
+        cozyCncfVersion.value,
+        cozySimpleModelingModelVersion.value,
+        cozyCncfCollaboratorApiVersion.value
+      )
       val skipUnchanged = cozySkipUnchangedGeneration.value
       val log = streams.value.log
 
@@ -101,6 +114,7 @@ object CozyPlugin extends AutoPlugin {
               baseDir = baseDirectory.value,
               delegateProjectDir = delegateProjectDir,
               delegateCommand = delegateCommand,
+              dependencyVersions = dependencyVersions,
               log = log
             )
             CozyGenerationState.write(stateFile, currentInputs)
@@ -119,15 +133,8 @@ object CozyPlugin extends AutoPlugin {
     },
 
     cozyBuildCAR := {
-      val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val sourceDir = cozySourceDir.value
-      val cozyFiles = CozyFileLoader.load(sourceDir)
       val log = streams.value.log
-      val model =
-        if (backend == "legacy")
-          parseValidatedModelOption(cozyFiles, log)
-        else
-          None
       val archive = target.value / s"${cozyCarName.value}.car"
 
       val mainJar = (Compile / packageBin).value
@@ -143,35 +150,26 @@ object CozyPlugin extends AutoPlugin {
         .distinct
         .sortBy(_.getName)
       val defaultConf = (Compile / resourceDirectory).value / "default.conf"
-      val docsFiles = CozyPackaging.collectDocs(baseDirectory.value / "docs")
-
-      val payload = CozyPackaging.ManifestPayload(
-        packaging = "car",
-        name = cozyCarName.value,
-        module = moduleName.value,
-        version = version.value,
-        scalaBinaryVersion = scalaBinaryVersion.value,
-        generatedAt = Instant.now().toString,
-        packageName = model.map(_.packageName),
-        entities = model.map(_.entities.map(_.name).sorted).getOrElse(Vector.empty),
-        aggregates = model.map(_.aggregates.map(_.name).sorted).getOrElse(Vector.empty),
-        views = model.map(_.views.map(_.name).sorted).getOrElse(Vector.empty),
-        commands = model.map(_.commands.map(_.name).sorted).getOrElse(Vector.empty),
-        queries = model.map(_.queries.map(_.name).sorted).getOrElse(Vector.empty),
-        events = model.map(_.events.map(_.name).sorted).getOrElse(Vector.empty),
-        operations = model.map(_.operations.map(_.name).sorted).getOrElse(Vector.empty),
-        precedence = Map("extension" -> "SAR > CAR", "config" -> "SAR > CAR"),
-        extra = cozyManifestMetadata.value + ("cozyPackaging" -> "car")
-      )
-
-      CozyPackaging.buildCar(
+      val packagingMetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value)
+      CozySbtBridge.packageCar(
         archive = archive,
         mainJar = mainJar,
         libJars = libJars,
         spiJars = spiJars,
         defaultConf = if (defaultConf.exists()) Some(defaultConf) else None,
-        docsFiles = docsFiles,
-        manifestJson = CozyPackaging.renderManifest(payload)
+        docsDir = {
+          val d = baseDirectory.value / "docs"
+          if (d.exists()) Some(d) else None
+        },
+        name = cozyCarName.value,
+        version = version.value,
+        component = packagingMetadata.component,
+        extensions = packagingMetadata.extensions,
+        config = packagingMetadata.config,
+        baseDir = baseDirectory.value,
+        delegateProjectDir = cozyDelegateProjectDir.value,
+        delegateCommand = cozyDelegateCommand.value,
+        log = log
       )
 
       streams.value.log.info(s"[sbt-cozy] built CAR: ${archive.getAbsolutePath}")
@@ -179,52 +177,30 @@ object CozyPlugin extends AutoPlugin {
     },
 
     cozyBuildSAR := {
-      val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val sourceDir = cozySourceDir.value
-      val cozyFiles = CozyFileLoader.load(sourceDir)
+      val sarSources = CozyFileLoader.loadSarSources(sourceDir)
       val log = streams.value.log
-      if (cozyFiles.isEmpty) {
-        sys.error(s"[sbt-cozy] no cozy sources found under ${sourceDir.getAbsolutePath}; SAR requires subsystem definition sources")
+      if (sarSources.isEmpty) {
+        sys.error(s"[sbt-cozy] no subsystem sources found under ${sourceDir.getAbsolutePath}; SAR requires descriptor or cozy definition sources")
       }
-
-      val model =
-        if (backend == "legacy")
-          parseValidatedModelOption(cozyFiles, log)
-        else
-          None
       val archive = target.value / s"${cozySarName.value}.sar"
-      val subsystemSources = cozyFiles.map(file => file -> CozyPackaging.relativePath(sourceDir, file))
+      val subsystemSources = sarSources.map(file => file -> CozyPackaging.relativePath(sourceDir, file))
       val extensionJars = cozySarExtensionJars.value
         .filter(file => file.isFile && file.getName.endsWith(".jar"))
         .distinct
         .sortBy(_.getName)
       val applicationConf = (Compile / resourceDirectory).value / "application.conf"
 
-      val payload = CozyPackaging.ManifestPayload(
-        packaging = "sar",
-        name = cozySarName.value,
-        module = moduleName.value,
-        version = version.value,
-        scalaBinaryVersion = scalaBinaryVersion.value,
-        generatedAt = Instant.now().toString,
-        packageName = model.map(_.packageName),
-        entities = model.map(_.entities.map(_.name).sorted).getOrElse(Vector.empty),
-        aggregates = model.map(_.aggregates.map(_.name).sorted).getOrElse(Vector.empty),
-        views = model.map(_.views.map(_.name).sorted).getOrElse(Vector.empty),
-        commands = model.map(_.commands.map(_.name).sorted).getOrElse(Vector.empty),
-        queries = model.map(_.queries.map(_.name).sorted).getOrElse(Vector.empty),
-        events = model.map(_.events.map(_.name).sorted).getOrElse(Vector.empty),
-        operations = model.map(_.operations.map(_.name).sorted).getOrElse(Vector.empty),
-        precedence = Map("extension" -> "SAR > CAR", "config" -> "SAR > CAR"),
-        extra = cozyManifestMetadata.value + ("cozyPackaging" -> "sar")
-      )
-
-      CozyPackaging.buildSar(
+      CozySbtBridge.packageSar(
         archive = archive,
-        subsystemSources = subsystemSources,
+        sourceDir = sourceDir,
+        sourceFiles = subsystemSources.map(_._2),
         extensionJars = extensionJars,
         applicationConf = if (applicationConf.exists()) Some(applicationConf) else None,
-        manifestJson = CozyPackaging.renderManifest(payload)
+        baseDir = baseDirectory.value,
+        delegateProjectDir = cozyDelegateProjectDir.value,
+        delegateCommand = cozyDelegateCommand.value,
+        log = log
       )
 
       streams.value.log.info(s"[sbt-cozy] built SAR: ${archive.getAbsolutePath}")
@@ -249,6 +225,25 @@ object CozyPlugin extends AutoPlugin {
       destination
     },
 
+    cozyScaffoldApp := {
+      val generated = CozyAppScaffold.generate(
+        CozyAppScaffold.Spec(
+          appName = cozyAppName.value,
+          rootDir = cozyAppRootDir.value,
+          organization = organization.value,
+          version = version.value,
+          scalaVersion = scalaVersion.value,
+          sbtVersion = appConfiguration.value.provider.id.version,
+          pluginVersion = CozyAppScaffold.CurrentPluginVersion,
+          cncfVersion = cozyCncfVersion.value,
+          simpleModelingModelVersion = cozySimpleModelingModelVersion.value,
+          cncfCollaboratorApiVersion = cozyCncfCollaboratorApiVersion.value
+        )
+      )
+      streams.value.log.info(s"[sbt-cozy] scaffolded application root: ${cozyAppRootDir.value.getAbsolutePath}")
+      generated
+    },
+
     cozyRuntimeClasspathFile := {
       val out = target.value / "cncf.d" / "runtime-classpath.txt"
       val classpath = (Compile / fullClasspath).value
@@ -269,19 +264,11 @@ object CozyPlugin extends AutoPlugin {
     Compile / sourceGenerators += cozyGenerate.taskValue
   )
 
-  private def parseValidatedModelOption(cozyFiles: Seq[File], log: Logger): Option[CozyModel] = {
-    if (cozyFiles.isEmpty) {
-      None
-    } else {
-      try {
-        Some(parseValidatedModel(cozyFiles))
-      } catch {
-        case e: RuntimeException =>
-          log.warn(s"[sbt-cozy] failed to parse cozy metadata for manifest: ${e.getMessage}")
-          None
-      }
+  private def _dependencyVersion(deps: Seq[ModuleID], org: String, moduleBaseName: String): Option[String] =
+    deps.collectFirst {
+      case m if m.organization == org && (m.name == moduleBaseName || m.name.startsWith(moduleBaseName + "_")) =>
+        m.revision
     }
-  }
 
   private def parseValidatedModel(cozyFiles: Seq[File]): CozyModel = {
     val model = CozyParser.parseAll(cozyFiles) match {
@@ -332,6 +319,20 @@ private[cozy] object CozyConfigValidator {
 
 private[cozy] object CozyFileLoader {
   private val AcceptedExtensions = Set(".cml", ".cozy", ".dox")
+  private val AcceptedSarDescriptorNames = Set(
+    "descriptor.json",
+    "descriptor.yaml",
+    "descriptor.yml",
+    "descriptor.conf",
+    "descriptor.hocon",
+    "descriptor.xml",
+    "subsystem-descriptor.json",
+    "subsystem-descriptor.yaml",
+    "subsystem-descriptor.yml",
+    "subsystem-descriptor.conf",
+    "subsystem-descriptor.hocon",
+    "subsystem-descriptor.xml"
+  )
 
   def load(sourceDir: File): Seq[File] = {
     if (!sourceDir.exists()) {
@@ -340,6 +341,20 @@ private[cozy] object CozyFileLoader {
       (sourceDir ** "*").get
         .filter(_.isFile)
         .filter(file => AcceptedExtensions.exists(file.getName.endsWith))
+        .sortBy(_.getAbsolutePath)
+    }
+  }
+
+  def loadSarSources(sourceDir: File): Seq[File] = {
+    if (!sourceDir.exists()) {
+      Seq.empty
+    } else {
+      (sourceDir ** "*").get
+        .filter(_.isFile)
+        .filter(file =>
+          AcceptedExtensions.exists(file.getName.endsWith) ||
+            AcceptedSarDescriptorNames.contains(file.getName)
+        )
         .sortBy(_.getAbsolutePath)
     }
   }
@@ -824,6 +839,18 @@ ${body}
   }
 }
 
+private[cozy] final case class CozyDependencyVersions(
+  cncfVersion: String,
+  simpleModelingModelVersion: String,
+  cncfCollaboratorApiVersion: String
+) {
+  def toSettings: Map[String, String] = Map(
+    "cncfVersion" -> cncfVersion,
+    "simpleModelingModelVersion" -> simpleModelingModelVersion,
+    "cncfCollaboratorApiVersion" -> cncfCollaboratorApiVersion
+  )
+}
+
 private[cozy] object CozyDelegatedGenerator {
   private val ManifestRelativePath = "sbt-cozy/generated-files.txt"
   private val SourceMarker = "/src_managed/main/scala/"
@@ -839,6 +866,7 @@ private[cozy] object CozyDelegatedGenerator {
     baseDir: File,
     delegateProjectDir: Option[File],
     delegateCommand: Seq[String],
+    dependencyVersions: CozyDependencyVersions,
     log: Logger
   ): Seq[File] = {
     val workDir = targetBaseDir / "sbt-cozy" / "delegate-work"
@@ -859,6 +887,7 @@ private[cozy] object CozyDelegatedGenerator {
           baseDir = baseDir,
           delegateProjectDir = delegateProjectDir,
           delegateCommand = delegateCommand,
+          dependencyVersions = dependencyVersions,
           log = log
         )
     }
@@ -888,16 +917,18 @@ private[cozy] object CozyDelegatedGenerator {
     baseDir: File,
     delegateProjectDir: Option[File],
     delegateCommand: Seq[String],
+    dependencyVersions: CozyDependencyVersions,
     log: Logger
   ): Seq[File] = {
     val saveDir = workDir / s"run-${runIndex}"
     IO.createDirectory(saveDir)
-    val delegate = resolveDelegateExecution(
+    val delegate = CozySbtBridge.resolveGenerate(
       baseDir = baseDir,
       explicitProjectDir = delegateProjectDir,
       delegateCommand = delegateCommand,
       source = source,
-      saveDir = saveDir
+      saveDir = saveDir,
+      settings = dependencyVersions.toSettings
     )
     val command = delegate.command
 
@@ -939,80 +970,6 @@ private[cozy] object CozyDelegatedGenerator {
       destination
     }
   }
-
-  private case class DelegateExecution(cwd: File, command: Seq[String])
-
-  private def resolveDelegateExecution(
-    baseDir: File,
-    explicitProjectDir: Option[File],
-    delegateCommand: Seq[String],
-    source: File,
-    saveDir: File
-  ): DelegateExecution = {
-    val commandPrefix = delegateCommand match {
-      case Seq() =>
-        sys.error("[sbt-cozy] cozy delegate command is empty.")
-      case xs => xs
-    }
-    if (usesProjectDelegate(explicitProjectDir, commandPrefix)) {
-      val cozyDir = resolveDelegateProjectDir(baseDir, explicitProjectDir)
-      val runMainCommand =
-        s"runMain cozy.Cozy modeler-scala ${source.getAbsolutePath} --save=${saveDir.getAbsolutePath}"
-      DelegateExecution(cozyDir, commandPrefix :+ runMainCommand)
-    } else {
-      DelegateExecution(
-        cwd = baseDir,
-        command = commandPrefix ++ Seq(
-          "modeler-scala",
-          source.getAbsolutePath,
-          s"--save=${saveDir.getAbsolutePath}"
-        )
-      )
-    }
-  }
-
-  private def usesProjectDelegate(explicitProjectDir: Option[File], delegateCommand: Seq[String]): Boolean =
-    explicitProjectDir.nonEmpty || delegateCommand.headOption.contains("sbt")
-
-  private[cozy] def resolveDelegateProjectDir(baseDir: File, explicit: Option[File]): File = {
-    val home = file(System.getProperty("user.home"))
-    val candidates = candidateDelegateProjectDirs(baseDir, home)
-
-    val resolved = explicit.orElse(candidates.find(isValidCozyProject))
-    resolved.filter(isValidCozyProject).getOrElse {
-      sys.error(
-        "[sbt-cozy] cozy project directory is not configured. " +
-        "Place cozy in the same repository/workspace, or set cozyDelegateProjectDir / SBT_COZY_PROJECT_DIR."
-      )
-    }
-  }
-
-  private[cozy] def candidateDelegateProjectDirs(baseDir: File, home: File): Vector[File] = {
-    val parent = Option(baseDir.getParentFile)
-    val repoCandidates = parent.toVector.flatMap { dir =>
-      Vector(
-        dir / "cozy",
-        dir / "cncf" / "cozy",
-        dir / "modules" / "cozy",
-        dir / "tools" / "cozy"
-      )
-    }
-    val localCandidates = Vector(
-      baseDir / "cozy",
-      baseDir / "modules" / "cozy",
-      baseDir / "tools" / "cozy",
-      home / "src" / "dev2025" / "cozy",
-      home / "src" / "dev2026" / "cozy"
-    )
-    (repoCandidates ++ localCandidates)
-      .filter(_ != null)
-      .foldLeft(Vector.empty[File]) { (acc, candidate) =>
-        if (acc.exists(_.getAbsolutePath == candidate.getAbsolutePath)) acc else acc :+ candidate
-      }
-  }
-
-  private def isValidCozyProject(dir: File): Boolean =
-    dir != null && dir.isDirectory && (dir / "build.sbt").isFile
 
   private def injectCncfEntityImports(content: String, relativePath: String): String = {
     if (!relativePath.startsWith("org/simplemodeling/textus/useraccount/entity/"))
@@ -1065,72 +1022,521 @@ private[cozy] object CozyDelegatedGenerator {
     path.replace('\\', '/').stripPrefix("/")
 }
 
-private[cozy] object CozyPackaging {
-  final case class ManifestPayload(
-    packaging: String,
-    name: String,
-    module: String,
-    version: String,
-    scalaBinaryVersion: String,
-    generatedAt: String,
-    packageName: Option[String],
-    entities: Vector[String],
-    aggregates: Vector[String],
-    views: Vector[String],
-    commands: Vector[String],
-    queries: Vector[String],
-    events: Vector[String],
-    operations: Vector[String],
-    precedence: Map[String, String],
-    extra: Map[String, String]
+final case class CozyPackageMetadata(
+  component: String,
+  extensions: Map[String, String],
+  config: Map[String, String]
+)
+
+private[cozy] object CozyManifestMetadata {
+  private val ComponentKey = "component"
+  private val ComponentletsKey = "componentlets"
+  private val ComponentletPrefix = "componentlet."
+  private val DescriptorJsonKey = "componentDescriptorJson"
+
+  def from(metadata: Map[String, String], defaultComponent: String): CozyPackageMetadata = {
+    val component = metadata.getOrElse(ComponentKey, defaultComponent)
+    val componentletNames = _componentletNames(metadata)
+    val reservedKeys = Set(ComponentKey, ComponentletsKey) ++
+      metadata.keySet.filter(_.startsWith(ComponentletPrefix))
+    val passthroughExtensions = metadata -- reservedKeys
+    val descriptorJson = _descriptorJson(component, passthroughExtensions, componentletNames, metadata)
+    CozyPackageMetadata(
+      component = component,
+      extensions = passthroughExtensions + (DescriptorJsonKey -> descriptorJson),
+      config = Map.empty
+    )
+  }
+
+  private def _componentletNames(metadata: Map[String, String]): Vector[String] = {
+    val fromList = metadata
+      .get(ComponentletsKey)
+      .toVector
+      .flatMap(_.split(",").toVector)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+    val fromKeys = metadata.keysIterator
+      .filter(_.startsWith(ComponentletPrefix))
+      .flatMap { key =>
+        key.stripPrefix(ComponentletPrefix).split("\\.", 2).headOption
+      }
+      .toVector
+      .map(_.trim)
+      .filter(_.nonEmpty)
+    (fromList ++ fromKeys).distinct.sorted.toVector
+  }
+
+  private def _descriptorJson(
+    component: String,
+    rootMetadata: Map[String, String],
+    componentletNames: Vector[String],
+    metadata: Map[String, String]
+  ): String = {
+    val componentlets = componentletNames.map { name =>
+      val prefix = s"$ComponentletPrefix$name."
+      val fields = metadata.collect {
+        case (key, value) if key.startsWith(prefix) => key.stripPrefix(prefix) -> value
+      }.toVector.sortBy(_._1)
+      name -> fields
+    }
+    val rootFields = rootMetadata.toVector.sortBy(_._1)
+    val componentJson = _jsonFields(Vector(("name", component)) ++ rootFields)
+    val componentletsJson = componentlets.map { case (name, fields) =>
+      _jsonFields(Vector(("name", name)) ++ fields)
+    }.mkString("[", ",", "]")
+    s"""{"component":$componentJson,"componentlets":$componentletsJson}"""
+  }
+
+  private def _jsonFields(fields: Vector[(String, String)]): String =
+    fields.map { case (key, value) =>
+      s"${_jsonString(key)}:${_jsonString(value)}"
+    }.mkString("{", ",", "}")
+
+  private def _jsonString(value: String): String = {
+    val builder = new StringBuilder
+    builder.append('"')
+    value.foreach {
+      case '"' => builder.append("\\\"")
+      case '\\' => builder.append("\\\\")
+      case '\b' => builder.append("\\b")
+      case '\f' => builder.append("\\f")
+      case '\n' => builder.append("\\n")
+      case '\r' => builder.append("\\r")
+      case '\t' => builder.append("\\t")
+      case c if c < ' ' => builder.append(f"\\u${c.toInt}%04x")
+      case c => builder.append(c)
+    }
+    builder.append('"')
+    builder.result()
+  }
+}
+
+private[cozy] object CozySbtBridge {
+  private val DevelopmentProjectCommand = Seq(
+    "sbt",
+    "--batch",
+    "-Dsbt.server.autostart=false",
+    "-Dsbt.supershell=false"
   )
 
-  def buildCar(
+  def resolveGenerate(
+    baseDir: File,
+    explicitProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    source: File,
+    saveDir: File,
+    settings: Map[String, String] = Map.empty
+  ): DelegateExecution = {
+    val request = _request(
+      action = "generate",
+      arguments = Vector(
+        "modeler-scala",
+        source.getAbsolutePath,
+        s"--save=${saveDir.getAbsolutePath}"
+      )
+    )
+    _resolve(baseDir, explicitProjectDir, delegateCommand, request.copy(settings = settings))
+  }
+
+  def packageCar(
     archive: File,
     mainJar: File,
     libJars: Seq[File],
     spiJars: Seq[File],
     defaultConf: Option[File],
-    docsFiles: Seq[(File, String)],
-    manifestJson: String
-  ): File = {
-    IO.withTemporaryDirectory { staging =>
-      copyTo(mainJar, staging / "component" / "main.jar")
-      copyCollection(libJars, staging / "lib")
-      copyCollection(spiJars, staging / "spi")
-      defaultConf.foreach(file => copyTo(file, staging / "config" / "default.conf"))
-      docsFiles.foreach {
-        case (source, relative) =>
-          copyTo(source, staging / "docs" / normalizePath(relative))
-      }
-      writeText(staging / "meta" / "manifest.json", manifestJson)
-      ensureSectionPlaceholders(staging, Vector("component", "lib", "spi", "config", "docs", "meta"))
-      writeArchive(staging, archive)
-    }
-    archive
+    docsDir: Option[File],
+    name: String,
+    version: String,
+    component: String,
+    extensions: Map[String, String],
+    config: Map[String, String],
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    _run(
+      _request(
+        action = "package-car",
+        arguments =
+          Vector(
+            s"--save=${archive.getAbsolutePath}",
+            s"--main-jar=${mainJar.getAbsolutePath}",
+            s"--name=$name",
+            s"--version=$version",
+            s"--component=$component"
+          ) ++
+            _csv_arg("lib-jars", libJars.map(_.getAbsolutePath)) ++
+            _csv_arg("spi-jars", spiJars.map(_.getAbsolutePath)) ++
+            defaultConf.toVector.map(f => s"--default-conf=${f.getAbsolutePath}") ++
+            docsDir.toVector.map(f => s"--docs-dir=${f.getAbsolutePath}") ++
+            _map_arg("extensions", extensions) ++
+            _map_arg("config", config)
+      ),
+      baseDir,
+      delegateProjectDir,
+      delegateCommand,
+      log
+    )
   }
 
-  def buildSar(
+  def packageSar(
     archive: File,
-    subsystemSources: Seq[(File, String)],
+    sourceDir: File,
+    sourceFiles: Seq[String],
     extensionJars: Seq[File],
     applicationConf: Option[File],
-    manifestJson: String
-  ): File = {
-    IO.withTemporaryDirectory { staging =>
-      subsystemSources.foreach {
-        case (source, relative) =>
-          copyTo(source, staging / "subsystem" / normalizePath(relative))
-      }
-      copyCollection(extensionJars, staging / "extension")
-      applicationConf.foreach(file => copyTo(file, staging / "config" / "application.conf"))
-      writeText(staging / "meta" / "manifest.json", manifestJson)
-      ensureSectionPlaceholders(staging, Vector("subsystem", "extension", "config", "meta"))
-      writeArchive(staging, archive)
-    }
-    archive
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    _run(
+      _request(
+        action = "package-sar",
+        arguments =
+          Vector(
+            s"--save=${archive.getAbsolutePath}",
+            s"--source-dir=${sourceDir.getAbsolutePath}"
+          ) ++
+            _csv_arg("source-files", sourceFiles) ++
+            _csv_arg("extension-jars", extensionJars.map(_.getAbsolutePath)) ++
+            applicationConf.toVector.map(f => s"--application-conf=${f.getAbsolutePath}")
+      ),
+      baseDir,
+      delegateProjectDir,
+      delegateCommand,
+      log
+    )
   }
 
+  private def _run(
+    request: BridgeRequest,
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    val execution = _resolve(baseDir, delegateProjectDir, delegateCommand, request)
+    val outLines = scala.collection.mutable.ArrayBuffer.empty[String]
+    val errLines = scala.collection.mutable.ArrayBuffer.empty[String]
+    val exit = Process(execution.command, execution.cwd).!(ProcessLogger(
+      out => {
+        outLines += out
+        log.debug(s"[sbt-cozy/cozy] $out")
+      },
+      err => {
+        errLines += err
+        log.warn(s"[sbt-cozy/cozy] $err")
+      }
+    ))
+    if (exit != 0) {
+      val details = (outLines ++ errLines).takeRight(40).mkString("\n")
+      sys.error(
+        s"""[sbt-cozy] cozy packaging delegate failed (${exit})
+           |[sbt-cozy] command: ${execution.command.mkString(" ")}
+           |[sbt-cozy] cwd: ${execution.cwd.getAbsolutePath}
+           |[sbt-cozy] recent logs:
+           |${details}""".stripMargin
+      )
+    }
+  }
+
+  private[cozy] final case class DelegateExecution(cwd: File, command: Seq[String])
+  private case class BridgeRequest(action: String, arguments: Vector[String], settings: Map[String, String] = Map.empty)
+
+  private[cozy] def resolveForTest(
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    action: String,
+    arguments: Vector[String]
+  ): (File, Seq[String]) = {
+    val execution = _resolve(baseDir, delegateProjectDir, delegateCommand, _request(action, arguments))
+    execution.cwd -> execution.command
+  }
+
+  private def _resolve(
+    baseDir: File,
+    explicitProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    request: BridgeRequest
+  ): DelegateExecution = {
+    val requestFile = _write_request_file(request)
+    explicitProjectDir match {
+      case Some(cozyDir) =>
+        if (!cozyDir.isDirectory || !(cozyDir / "build.sbt").isFile)
+          sys.error(s"[sbt-cozy] cozyDelegateProjectDir is not a valid cozy project: ${cozyDir.getAbsolutePath}")
+        val runMainArgs = Vector(
+          "sbt-bridge",
+          "v1",
+          s"--request=${requestFile.getAbsolutePath}"
+        ).map(_quote).mkString(" ")
+        DelegateExecution(cozyDir, DevelopmentProjectCommand :+ s"runMain cozy.Cozy $runMainArgs")
+      case None =>
+        val commandPrefix = if (delegateCommand.nonEmpty) delegateCommand else Seq("cozy")
+        DelegateExecution(baseDir, commandPrefix ++ Seq("sbt-bridge", "v1", s"--request=${requestFile.getAbsolutePath}"))
+    }
+  }
+
+  private def _quote(s: String): String =
+    "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+  private def _request(action: String, arguments: Vector[String]): BridgeRequest =
+    BridgeRequest(action, arguments)
+
+  private def _write_request_file(request: BridgeRequest): File = {
+    val path = Files.createTempFile("sbt-cozy-bridge-", ".json")
+    Files.write(path, _render_request_json(request).getBytes(StandardCharsets.UTF_8))
+    path.toFile.getAbsoluteFile
+  }
+
+  private def _render_request_json(request: BridgeRequest): String =
+    s"""{
+       |  "version": "v1",
+       |  "action": ${_json(request.action)},
+       |  "arguments": ${request.arguments.map(_json).mkString("[", ", ", "]")},
+       |  "settings": ${_json_map(request.settings)}
+       |}
+       |""".stripMargin
+
+  private def _json(s: String): String =
+    "\"" + s.flatMap {
+      case '\\' => "\\\\"
+      case '"' => "\\\""
+      case '\n' => "\\n"
+      case '\r' => "\\r"
+      case '\t' => "\\t"
+      case c => c.toString
+    } + "\""
+
+  private def _json_map(values: Map[String, String]): String =
+    values.toVector.sortBy(_._1).map { case (k, v) => s"${_json(k)}: ${_json(v)}" }.mkString("{", ", ", "}")
+
+  private def _csv_arg(name: String, values: Seq[String]): Vector[String] =
+    if (values.isEmpty) Vector.empty else Vector(s"--${name}=${values.mkString(",")}")
+
+  private def _map_arg(name: String, values: Map[String, String]): Vector[String] =
+    if (values.isEmpty) Vector.empty
+    else Vector(s"--${name}=${_json_map(values)}")
+}
+
+private[cozy] object CozyAppScaffold {
+  val CurrentPluginVersion = "0.1.3-SNAPSHOT"
+
+  final case class Spec(
+    appName: String,
+    rootDir: File,
+    organization: String,
+    version: String,
+    scalaVersion: String,
+    sbtVersion: String,
+    pluginVersion: String,
+    cncfVersion: String,
+    simpleModelingModelVersion: String,
+    cncfCollaboratorApiVersion: String
+  )
+
+  def generate(spec: Spec): Seq[File] = {
+    val root = spec.rootDir.getAbsoluteFile
+    if (root.exists() && root.listFiles().toVector.nonEmpty)
+      sys.error(s"[sbt-cozy] cozyAppRootDir is not empty: ${root.getAbsolutePath}")
+    IO.createDirectory(root)
+
+    val generated = Vector(
+      _write(root / "README.md", _rootReadme(spec)),
+      _write(root / "build.sbt", _rootBuild(spec)),
+      _write(root / "project" / "build.properties", s"sbt.version=${spec.sbtVersion}\n"),
+      _write(root / "project" / "plugins.sbt", _pluginsSbt(spec)),
+      _write(root / "component" / "src" / "main" / "cozy" / s"${spec.appName}.cml", _componentCml(spec)),
+      _write(root / "component" / "src" / "main" / "resources" / ".keep", ""),
+      _write(root / "component" / "src" / "main" / "web" / ".keep", ""),
+      _write(root / "component" / "src" / "test" / "scala" / ".keep", ""),
+      _write(root / "subsystem" / "subsystem-descriptor.yaml", _subsystemDescriptor(spec)),
+      _write(root / "subsystem" / "src" / "main" / "resources" / ".keep", ""),
+      _write(root / "subsystem" / "src" / "test" / "scala" / ".keep", ""),
+      _write(root / "subsystem" / "scripts" / "README.md", _scriptsReadme(spec))
+    )
+
+    generated
+  }
+
+  private def _write(path: File, content: String): File = {
+    IO.createDirectory(path.getParentFile)
+    IO.write(path, content)
+    path
+  }
+
+  private def _normalized_package_name(appname: String): String =
+    appname.toLowerCase.replace('-', '.')
+
+  private def _rootReadme(spec: Spec): String =
+    s"""# ${spec.appName}
+|
+|Generated Cozy application scaffold.
+|
+|Layout:
+|- `component/`: application CAR source, Cozy model, web assets, component tests
+|- `subsystem/`: subsystem descriptor, provider wiring, local subsystem scripts
+|
+|Common commands:
+|- `sbt compile`
+|- `sbt component/cozyGenerate`
+|- `sbt component/cozyBuildCAR`
+|- `sbt subsystem/cozyBuildSAR`
+|
+|Next expected edits:
+|1. model the application under `component/src/main/cozy/`
+|2. add UI assets under `component/src/main/web/`
+|3. bind external components in `subsystem/subsystem-descriptor.yaml`
+|""".stripMargin
+
+  private def _rootBuild(spec: Spec): String = {
+    val apppkg = _normalized_package_name(spec.appName)
+    s"""import org.goldenport.cozy.CozyPlugin.autoImport._
+|import sbt.Keys.*
+|
+|val scala3Version = ${_scala_string(spec.scalaVersion)}
+|
+|def sampleVersion(envName: String, fileName: String, fallback: String): String =
+|  sys.env.get(envName)
+|    .orElse {
+|      sys.env.get("TEXTUS_SAMPLES_ROOT")
+|        .orElse(sys.env.get("CNCF_SAMPLES_ROOT"))
+|        .flatMap { root =>
+|          val versionFile = file(root) / "versions" / fileName
+|          if (versionFile.isFile)
+|            Some(IO.read(versionFile).trim).filter(_.nonEmpty)
+|          else
+|            None
+|        }
+|    }
+|    .getOrElse(fallback)
+|
+|val cncfVersion = sampleVersion("CNCF_VERSION", "cncf-version.conf", ${_scala_string(spec.cncfVersion)})
+|val simpleModelingModelVersion = sampleVersion("SIMPLEMODELING_MODEL_VERSION", "simplemodeling-model-version.conf", ${_scala_string(spec.simpleModelingModelVersion)})
+|val cncfCollaboratorApiVersion = sampleVersion("CNCF_COLLABORATOR_API_VERSION", "cncf-collaborator-api-version.conf", ${_scala_string(spec.cncfCollaboratorApiVersion)})
+|
+|lazy val commonSettings = Seq(
+|  organization := ${_scala_string(spec.organization)},
+|  version := ${_scala_string(spec.version)},
+|  scalaVersion := scala3Version,
+|  resolvers += Resolver.defaultLocal,
+|  resolvers += Resolver.file("Local Ivy", file(Path.userHome.absolutePath + "/.ivy2/local"))(Resolver.ivyStylePatterns),
+|  resolvers += "Local Maven Repository" at ("file://" + Path.userHome.absolutePath + "/.m2/repository"),
+|  resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/maven"
+|)
+|
+|lazy val root = project
+|  .in(file("."))
+|  .aggregate(component, subsystem)
+|  .settings(commonSettings)
+|  .settings(
+|    name := ${_scala_string(spec.appName)},
+|    publish / skip := true
+|  )
+|
+|lazy val component = project
+|  .in(file("component"))
+|  .enablePlugins(org.goldenport.cozy.CozyPlugin)
+|  .settings(commonSettings)
+|  .settings(
+|    name := ${_scala_string(spec.appName + "-component")},
+|    cozyGeneratorBackend := "cozy",
+|    cozyManifestMetadata ++= Map(
+|      "component" -> ${_scala_string(spec.appName)},
+|      "boundedContext" -> "default",
+|      "domain" -> ${_scala_string(spec.appName)}
+|    ),
+|    libraryDependencies ++= Seq(
+|      "org.goldenport" %% "goldenport-cncf" % cncfVersion,
+|      "org.simplemodeling" %% "simplemodeling-model" % simpleModelingModelVersion,
+|      "org.goldenport" % "cncf-collaborator-api" % cncfCollaboratorApiVersion,
+|      "org.scalatest" %% "scalatest" % "3.2.19" % Test
+|    ),
+|    Test / fork := false
+|  )
+|
+|lazy val subsystem = project
+|  .in(file("subsystem"))
+|  .enablePlugins(org.goldenport.cozy.CozyPlugin)
+|  .settings(commonSettings)
+|  .settings(
+|    name := ${_scala_string(spec.appName + "-subsystem")},
+|    cozyPackaging := "sar",
+|    cozySourceDir := baseDirectory.value,
+|    libraryDependencies ++= Seq(
+|      "org.goldenport" %% "goldenport-cncf" % cncfVersion,
+|      "org.scalatest" %% "scalatest" % "3.2.19" % Test
+|    ),
+|    Test / fork := false
+|  )
+|
+|addCommandAlias("cozyBuildAppCAR", "component/cozyBuildCAR")
+|addCommandAlias("cozyBuildAppSAR", "subsystem/cozyBuildSAR")
+|addCommandAlias("cozyGenerateApp", "component/cozyGenerate")
+|""".stripMargin
+  }
+
+  private def _pluginsSbt(spec: Spec): String =
+    s"""resolvers += Resolver.defaultLocal
+|addSbtPlugin("org.goldenport" % "sbt-cozy" % ${_scala_string(spec.pluginVersion)})
+|""".stripMargin
+
+  private def _componentCml(spec: Spec): String = {
+    val apppkg = _normalized_package_name(spec.appName)
+    s"""package sample.${apppkg}
+|entity Post
+|command CreatePost
+|query GetPost
+|query SearchPosts
+|operation post-post command CreatePost
+|operation get-post query GetPost
+|operation search-posts query SearchPosts
+|""".stripMargin
+  }
+
+  private def _subsystemDescriptor(spec: Spec): String =
+    s"""subsystem: ${spec.appName}
+|version: ${spec.version}
+|components:
+|  - component: ${spec.appName}
+|    coordinate: ${spec.organization}:${spec.appName}-component:${spec.version}
+|#  - component: textus-user-account
+|#    coordinate: org.textus:textus-user-account:0.1.0-SNAPSHOT
+|#security:
+|#  authentication:
+|#    convention: enabled
+|#    fallback_privilege: disabled
+|#    providers:
+|#      - name: user-account
+|#        component: textus-user-account
+|#        kind: human
+|#        enabled: true
+|#        priority: 100
+|#        schemes:
+|#          - bearer
+|#        default: true
+|""".stripMargin
+
+  private def _scriptsReadme(spec: Spec): String =
+    s"""# subsystem/scripts
+|
+|Place local subsystem run helpers here.
+|
+|Typical workflow:
+|- `sbt compile`
+|- `sbt component/cozyBuildCAR`
+|- `sbt subsystem/cozyBuildSAR`
+|
+|For ${spec.appName}, external providers such as `textus-user-account` are expected to be bound in `../subsystem-descriptor.yaml` by coordinate, not copied into this project tree.
+|""".stripMargin
+
+  private def _scala_string(value: String): String =
+    '"' + value.replace("\\", "\\\\").replace("\"", "\\\"") + '"'
+}
+
+private[cozy] object CozyPackaging {
   def collectDocs(docsDir: File): Seq[(File, String)] = {
     if (!docsDir.exists()) {
       Seq.empty
@@ -1144,94 +1550,5 @@ private[cozy] object CozyPackaging {
 
   def relativePath(baseDir: File, file: File): String = {
     IO.relativize(baseDir, file).getOrElse(file.getName).replace('\\', '/')
-  }
-
-  def renderManifest(payload: ManifestPayload): String = {
-    val fields = Vector(
-      "packaging" -> renderString(payload.packaging),
-      "name" -> renderString(payload.name),
-      "module" -> renderString(payload.module),
-      "version" -> renderString(payload.version),
-      "scalaBinaryVersion" -> renderString(payload.scalaBinaryVersion),
-      "generatedAt" -> renderString(payload.generatedAt),
-      "package" -> payload.packageName.map(renderString).getOrElse("null"),
-      "entities" -> renderArray(payload.entities),
-      "aggregates" -> renderArray(payload.aggregates),
-      "views" -> renderArray(payload.views),
-      "commands" -> renderArray(payload.commands),
-      "queries" -> renderArray(payload.queries),
-      "events" -> renderArray(payload.events),
-      "operations" -> renderArray(payload.operations),
-      "precedence" -> renderMap(payload.precedence),
-      "extra" -> renderMap(payload.extra)
-    )
-
-    val body = fields.map {
-      case (key, value) => s"  ${renderString(key)}: ${value}"
-    }.mkString(",\n")
-
-    s"{\n${body}\n}\n"
-  }
-
-  private def writeArchive(staging: File, archive: File): Unit = {
-    val entries = (staging ** "*").get
-      .filter(_.isFile)
-      .map(file => file -> relativePath(staging, file))
-      .sortBy(_._2)
-
-    IO.createDirectory(archive.getParentFile)
-    IO.delete(archive)
-    IO.zip(entries, archive)
-  }
-
-  private def ensureSectionPlaceholders(staging: File, sections: Vector[String]): Unit = {
-    sections.foreach { section =>
-      val dir = staging / section
-      val hasFiles = (dir ** "*").get.exists(_.isFile)
-      if (!hasFiles) {
-        writeText(dir / ".keep", "")
-      }
-    }
-  }
-
-  private def copyCollection(files: Seq[File], destinationDir: File): Unit = {
-    files.filter(_.isFile).foreach { source =>
-      copyTo(source, destinationDir / source.getName)
-    }
-  }
-
-  private def copyTo(source: File, destination: File): Unit = {
-    IO.createDirectory(destination.getParentFile)
-    IO.copyFile(source, destination, preserveLastModified = true)
-  }
-
-  private def writeText(path: File, content: String): Unit = {
-    IO.createDirectory(path.getParentFile)
-    IO.write(path, content)
-  }
-
-  private def normalizePath(path: String): String = path.replace('\\', '/').stripPrefix("/")
-
-  private def renderArray(values: Vector[String]): String = {
-    values.map(renderString).mkString("[", ", ", "]")
-  }
-
-  private def renderMap(values: Map[String, String]): String = {
-    val ordered = values.toVector.sortBy(_._1)
-    ordered.map {
-      case (key, value) => s"${renderString(key)}: ${renderString(value)}"
-    }.mkString("{", ", ", "}")
-  }
-
-  private def renderString(value: String): String = {
-    val escaped = value.flatMap {
-      case '\\' => "\\\\"
-      case '"' => "\\\""
-      case '\n' => "\\n"
-      case '\r' => "\\r"
-      case '\t' => "\\t"
-      case c => c.toString
-    }
-    "\"" + escaped + "\""
   }
 }

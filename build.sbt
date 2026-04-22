@@ -1,5 +1,5 @@
 ThisBuild / organization := "org.goldenport"
-ThisBuild / version := "0.1.2"
+ThisBuild / version := "0.1.3-SNAPSHOT"
 ThisBuild / description := "sbt plugin for cozy/CML Scala source generation and CAR/SAR packaging"
 
 ThisBuild / publishArtifact := true
