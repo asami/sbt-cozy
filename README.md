@@ -89,7 +89,7 @@ Tasks:
 resolvers += Resolver.defaultLocal
 resolvers += Resolver.mavenLocal
 
-addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.3-SNAPSHOT")
+addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.4-SNAPSHOT")
 ```
 
 `build.sbt`:
@@ -143,3 +143,11 @@ Recommended usage:
 
 - normal use: install/update the `cozy` command and let `sbt-cozy` call it directly
 - development against an in-progress `cozy` repo: set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))`
+
+Bridge governance:
+
+- vendored bridge fixtures live under `bridge-fixtures/sbt-bridge/v1/`
+- canonical fixtures are sourced from `cozy/bridge/sbt-bridge/v1/`
+- `scripts/check-bridge-fixtures.sh` detects fixture drift
+- `scripts/check-version-bump.sh` enforces a plugin version bump when bridge fixtures change
+- `scripts/check-bridge-compat.sh` runs the drift check, version-bump check, and test suite

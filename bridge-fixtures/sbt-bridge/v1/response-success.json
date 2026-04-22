@@ -1,0 +1,8 @@
+{
+  "version": "v1",
+  "status": "success",
+  "mode": "process-exit",
+  "action": "generate",
+  "exitCode": 0,
+  "message": "Bridge command completed successfully."
+}

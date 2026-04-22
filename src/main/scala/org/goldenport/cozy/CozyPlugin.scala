@@ -8,6 +8,15 @@ import sbt._
 import sbt.Keys._
 import scala.sys.process._
 
+/*
+ * @since   Mar. 22, 2026
+ *  version Mar. 23, 2026
+ *  version Mar. 25, 2026
+ *  version Apr.  1, 2026
+ *  version Apr.  4, 2026
+ * @version Apr. 23, 2026
+ * @author  ASAMI, Tomoharu
+ */
 object CozyPlugin extends AutoPlugin {
   object autoImport {
     val cozyConfig = settingKey[CozyConfig]("Configuration for sbt-cozy code generation")
@@ -1245,6 +1254,9 @@ private[cozy] object CozySbtBridge {
   private[cozy] final case class DelegateExecution(cwd: File, command: Seq[String])
   private case class BridgeRequest(action: String, arguments: Vector[String], settings: Map[String, String] = Map.empty)
 
+  private[cozy] def renderRequestJsonForTest(action: String, arguments: Vector[String], settings: Map[String, String] = Map.empty): String =
+    _render_request_json(BridgeRequest(action, arguments, settings))
+
   private[cozy] def resolveForTest(
     baseDir: File,
     delegateProjectDir: Option[File],
@@ -1322,7 +1334,7 @@ private[cozy] object CozySbtBridge {
 }
 
 private[cozy] object CozyAppScaffold {
-  val CurrentPluginVersion = "0.1.3-SNAPSHOT"
+  val CurrentPluginVersion = "0.1.4-SNAPSHOT"
 
   final case class Spec(
     appName: String,

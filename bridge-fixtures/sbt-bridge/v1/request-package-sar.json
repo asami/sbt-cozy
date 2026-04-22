@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "action": "package-sar",
+  "arguments": [
+    "--name=sample-subsystem",
+    "--version=0.1.0",
+    "--save=/tmp/sample-subsystem.sar",
+    "--source-dir=/tmp/src",
+    "--source-files=subsystem-descriptor.yaml"
+  ],
+  "settings": {}
+}

@@ -8,6 +8,13 @@ import scala.collection.JavaConverters._
 import org.scalatest.funsuite.AnyFunSuite
 import sbt._
 
+/*
+ * @since   Mar. 22, 2026
+ *  version Apr.  1, 2026
+ *  version Apr.  4, 2026
+ * @version Apr. 23, 2026
+ * @author  ASAMI, Tomoharu
+ */
 abstract class CozyTestBase extends AnyFunSuite {
   protected def withTempDir[A](prefix: String = "sbt-cozy-test")(f: File => A): A = {
     val dir = Files.createTempDirectory(prefix).toFile

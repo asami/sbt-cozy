@@ -1,0 +1,8 @@
+{
+  "version": "v1",
+  "status": "error",
+  "mode": "process-exit",
+  "action": "generate",
+  "exitCode": 1,
+  "message": "Bridge command failed with a diagnostic message."
+}

@@ -1,0 +1,36 @@
+{
+  "protocol": "sbt-bridge",
+  "version": "v1",
+  "sourceOfTruth": "cozy",
+  "supportedActions": [
+    "generate",
+    "package-car",
+    "package-sar"
+  ],
+  "request": {
+    "requiredFields": [
+      "version",
+      "action",
+      "arguments"
+    ],
+    "optionalFields": [
+      "settings"
+    ],
+    "settingsRule": "Consumers must ignore additive settings keys they do not understand."
+  },
+  "response": {
+    "mode": "process-exit",
+    "successExitCode": 0,
+    "errorExitCode": "non-zero",
+    "compatibilityFixtures": [
+      "response-success.json",
+      "response-error.json"
+    ],
+    "note": "The current runtime does not emit structured response payloads. The response fixtures define the canonical v1 envelope for tooling checks and future structured-response evolution."
+  },
+  "compatibility": {
+    "additiveFieldsAllowed": true,
+    "breakingChangesRequireVersionBump": true,
+    "nextBreakingVersion": "v2"
+  }
+}

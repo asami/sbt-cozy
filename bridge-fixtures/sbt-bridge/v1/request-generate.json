@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "action": "generate",
+  "arguments": [
+    "modeler-scala",
+    "/tmp/sample.cml",
+    "--save=/tmp/generated"
+  ],
+  "settings": {}
+}
