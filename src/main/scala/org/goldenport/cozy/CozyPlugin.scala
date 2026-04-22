@@ -1334,7 +1334,7 @@ private[cozy] object CozySbtBridge {
 }
 
 private[cozy] object CozyAppScaffold {
-  val CurrentPluginVersion = "0.1.4-SNAPSHOT"
+  val CurrentPluginVersion = "0.1.4"
 
   final case class Spec(
     appName: String,
