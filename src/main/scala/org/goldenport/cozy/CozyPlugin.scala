@@ -14,7 +14,7 @@ import scala.sys.process._
  *  version Mar. 25, 2026
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
- * @version Apr. 23, 2026
+ * @version Apr. 25, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyPlugin extends AutoPlugin {
@@ -168,6 +168,14 @@ object CozyPlugin extends AutoPlugin {
         defaultConf = if (defaultConf.exists()) Some(defaultConf) else None,
         docsDir = {
           val d = baseDirectory.value / "docs"
+          if (d.exists()) Some(d) else None
+        },
+        webDir = {
+          val d = baseDirectory.value / "src" / "main" / "web"
+          if (d.exists()) Some(d) else None
+        },
+        assemblyDescriptor = {
+          val d = baseDirectory.value / "assembly-descriptor.yaml"
           if (d.exists()) Some(d) else None
         },
         name = cozyCarName.value,
@@ -1154,6 +1162,8 @@ private[cozy] object CozySbtBridge {
     spiJars: Seq[File],
     defaultConf: Option[File],
     docsDir: Option[File],
+    webDir: Option[File],
+    assemblyDescriptor: Option[File],
     name: String,
     version: String,
     component: String,
@@ -1179,6 +1189,8 @@ private[cozy] object CozySbtBridge {
             _csv_arg("spi-jars", spiJars.map(_.getAbsolutePath)) ++
             defaultConf.toVector.map(f => s"--default-conf=${f.getAbsolutePath}") ++
             docsDir.toVector.map(f => s"--docs-dir=${f.getAbsolutePath}") ++
+            webDir.toVector.map(f => s"--web-dir=${f.getAbsolutePath}") ++
+            assemblyDescriptor.toVector.map(f => s"--assembly-descriptor=${f.getAbsolutePath}") ++
             _map_arg("extensions", extensions) ++
             _map_arg("config", config)
       ),
