@@ -257,6 +257,27 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
     }
   }
 
+  test("bridge can use explicit coursier version during development") {
+    withTempDir("sbt-cozy-delegate") { dir =>
+      val command = CozySbtBridge.coursierCommand("0.2.16-SNAPSHOT")
+      val (cwd, resolved) = CozySbtBridge.resolveForTest(
+        baseDir = dir,
+        delegateProjectDir = None,
+        delegateCommand = command,
+        action = "generate",
+        arguments = Vector("modeler-scala", "/tmp/model.cml", "--save=/tmp/out")
+      )
+      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
+      assert(resolved.take(2) == Seq("cs", "launch"))
+      assert(resolved.contains("ivy2Local"))
+      assert(resolved.contains("org.simplemodeling:cozy_2.12:0.2.16-SNAPSHOT"))
+      assert(resolved.contains("cozy.Cozy"))
+      assert(resolved.contains("--"))
+      assert(resolved.takeRight(2).head == "v1")
+      assert(resolved.last.startsWith("--request="))
+    }
+  }
+
   test("bridge uses explicit cozy project during development") {
     withTempDir("sbt-cozy-delegate") { dir =>
       val cozyDir = dir / "cozy"

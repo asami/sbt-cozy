@@ -24,6 +24,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyTargetDir = settingKey[File]("Directory where Scala sources are generated")
     val cozyGeneratorBackend = settingKey[String]("Generator backend. Either 'cozy' or 'legacy'.")
     val cozyDelegateProjectDir = settingKey[Option[File]]("Optional path to cozy project used by delegated generation during development.")
+    val cozyDelegateCoursierVersion = settingKey[Option[String]]("Optional cozy version used to execute delegated generation through coursier during development.")
     val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation and packaging.")
     val cozyCncfVersion = settingKey[String]("CNCF version propagated to delegated cozy generation and generated CAR project build files.")
     val cozySimpleModelingModelVersion = settingKey[String]("simplemodeling-model version propagated to delegated cozy generation and generated CAR project build files.")
@@ -34,11 +35,12 @@ object CozyPlugin extends AutoPlugin {
     val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare runtime classpath file.")
 
     val cozyPackaging = settingKey[String]("Default packaging target. Either 'car' or 'sar'.")
+    val cozyCarSourceDir = settingKey[File]("Directory containing CAR-root files included in cozyBuildCAR")
     val cozyCarName = settingKey[String]("Base file name of the generated CAR archive")
     val cozySarName = settingKey[String]("Base file name of the generated SAR archive")
     val cozySpiJars = settingKey[Seq[File]]("Additional SPI jars to include under CAR /spi")
     val cozySarExtensionJars = settingKey[Seq[File]]("Injected extension jars to include under SAR /extension")
-    val cozyManifestMetadata = settingKey[Map[String, String]]("Additional metadata fields written to manifest.json")
+    val cozyManifestMetadata = settingKey[Map[String, String]]("Additional metadata fields written to the CAR component descriptor")
     val cozyLocalRepositoryDir = settingKey[File]("Local destination directory for cozyPublishCAR/cozyPublishSAR")
 
     val cozyBuildCAR = taskKey[File]("Build CAR archive from compiled outputs")
@@ -61,13 +63,15 @@ object CozyPlugin extends AutoPlugin {
     cozyTargetDir := (Compile / sourceManaged).value,
     cozyGeneratorBackend := sys.env.getOrElse("SBT_COZY_GENERATOR_BACKEND", "cozy"),
     cozyDelegateProjectDir := sys.env.get("SBT_COZY_PROJECT_DIR").map(file),
-    cozyDelegateCommand := Seq("cozy"),
+    cozyDelegateCoursierVersion := sys.env.get("SBT_COZY_COURSIER_VERSION").map(_.trim).filter(_.nonEmpty),
+    cozyDelegateCommand := cozyDelegateCoursierVersion.value.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy")),
     cozyCncfVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "goldenport-cncf").getOrElse("0.4.2-SNAPSHOT"),
     cozySimpleModelingModelVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.simplemodeling", "simplemodeling-model").getOrElse("0.1.2-SNAPSHOT"),
     cozyCncfCollaboratorApiVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "cncf-collaborator-api").getOrElse("0.1.0-SNAPSHOT"),
     cozySkipUnchangedGeneration := true,
 
     cozyPackaging := "car",
+    cozyCarSourceDir := (Compile / sourceDirectory).value / "car",
     cozyCarName := s"${moduleName.value}-${version.value}",
     cozySarName := s"${moduleName.value}-${version.value}",
     cozySpiJars := Seq.empty,
@@ -158,24 +162,22 @@ object CozyPlugin extends AutoPlugin {
         .filter(file => file.isFile && file.getName.endsWith(".jar"))
         .distinct
         .sortBy(_.getName)
-      val defaultConf = (Compile / resourceDirectory).value / "default.conf"
+      val carSourceDir = cozyCarSourceDir.value
+      val defaultConf = carSourceDir / "config" / "default.conf"
       val packagingMetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value)
       CozySbtBridge.packageCar(
         archive = archive,
         mainJar = mainJar,
         libJars = libJars,
         spiJars = spiJars,
+        carDir = if (carSourceDir.exists()) Some(carSourceDir) else None,
         defaultConf = if (defaultConf.exists()) Some(defaultConf) else None,
-        docsDir = {
-          val d = baseDirectory.value / "docs"
-          if (d.exists()) Some(d) else None
-        },
         webDir = {
           val d = baseDirectory.value / "src" / "main" / "web"
           if (d.exists()) Some(d) else None
         },
         assemblyDescriptor = {
-          val d = baseDirectory.value / "assembly-descriptor.yaml"
+          val d = carSourceDir / "assembly-descriptor.yaml"
           if (d.exists()) Some(d) else None
         },
         name = cozyCarName.value,
@@ -1136,6 +1138,19 @@ private[cozy] object CozySbtBridge {
     "-Dsbt.supershell=false"
   )
 
+  private val CoursierRepositories = Seq(
+    "--repository", "https://raw.github.com/asami/maven-repository/2020/releases",
+    "--repository", "https://raw.github.com/asami/maven-repository/2025/releases",
+    "--repository", "https://maven.pkg.github.com/asami/maven-repository"
+  )
+
+  private[cozy] def coursierCommand(version: String): Seq[String] = {
+    val launcher = sys.env.getOrElse("SBT_COZY_COURSIER_COMMAND", "cs")
+    val local = if (version.endsWith("-SNAPSHOT")) Seq("--repository", "ivy2Local") else Seq.empty
+    Seq(launcher, "launch") ++ local ++ CoursierRepositories ++
+      Seq(s"org.simplemodeling:cozy_2.12:$version", "-M", "cozy.Cozy", "--")
+  }
+
   def resolveGenerate(
     baseDir: File,
     explicitProjectDir: Option[File],
@@ -1160,8 +1175,8 @@ private[cozy] object CozySbtBridge {
     mainJar: File,
     libJars: Seq[File],
     spiJars: Seq[File],
+    carDir: Option[File],
     defaultConf: Option[File],
-    docsDir: Option[File],
     webDir: Option[File],
     assemblyDescriptor: Option[File],
     name: String,
@@ -1187,8 +1202,8 @@ private[cozy] object CozySbtBridge {
           ) ++
             _csv_arg("lib-jars", libJars.map(_.getAbsolutePath)) ++
             _csv_arg("spi-jars", spiJars.map(_.getAbsolutePath)) ++
+            carDir.toVector.map(f => s"--car-dir=${f.getAbsolutePath}") ++
             defaultConf.toVector.map(f => s"--default-conf=${f.getAbsolutePath}") ++
-            docsDir.toVector.map(f => s"--docs-dir=${f.getAbsolutePath}") ++
             webDir.toVector.map(f => s"--web-dir=${f.getAbsolutePath}") ++
             assemblyDescriptor.toVector.map(f => s"--assembly-descriptor=${f.getAbsolutePath}") ++
             _map_arg("extensions", extensions) ++
@@ -1346,7 +1361,7 @@ private[cozy] object CozySbtBridge {
 }
 
 private[cozy] object CozyAppScaffold {
-  val CurrentPluginVersion = "0.1.4"
+  val CurrentPluginVersion = "0.1.5-SNAPSHOT"
 
   final case class Spec(
     appName: String,

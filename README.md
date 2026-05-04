@@ -36,6 +36,7 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 ### Packaging
 
 - `cozyPackaging`: default packaging type (`car` or `sar`)
+- `cozyCarSourceDir`: CAR-root source directory (default: `src/main/car`)
 - `cozyCarName`: base file name of the generated CAR archive (default: `${moduleName}-${version}`)
 - `cozySarName`: base file name of the generated SAR archive (default: `${moduleName}-${version}`)
 - `cozySpiJars`: additional JARs included under `spi/` in CAR
@@ -69,11 +70,18 @@ Tasks:
 ### CAR
 
 - `component-descriptor.json`
+- `assembly-descriptor.yaml` when supplied from `src/main/car`
 - `component/main.jar`
 - `lib/*.jar`
 - `spi/*.jar`
 - `config/default.conf`
-- `docs/*.md`
+- `web/**`
+
+CAR-root files come from `src/main/car`. For example,
+`src/main/car/assembly-descriptor.yaml` is packaged as
+`assembly-descriptor.yaml`, and `src/main/car/config/default.conf` is packaged
+as `config/default.conf`. Repository `docs/` are development documentation and
+are not packaged into CAR artifacts.
 
 ### SAR
 
@@ -89,7 +97,7 @@ Tasks:
 resolvers += Resolver.defaultLocal
 resolvers += Resolver.mavenLocal
 
-addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.4")
+addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.5-SNAPSHOT")
 ```
 
 `build.sbt`:
@@ -143,6 +151,9 @@ Recommended usage:
 
 - normal use: install/update the `cozy` command and let `sbt-cozy` call it directly
 - development against an in-progress `cozy` repo: set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))`
+- development against a published local SNAPSHOT: run `sbt publishLocal` in `cozy`, then set `cozyDelegateCoursierVersion := Some("0.2.16-SNAPSHOT")` or `SBT_COZY_COURSIER_VERSION=0.2.16-SNAPSHOT`
+
+The default bridge route always launches the shell command `cozy` and passes the `sbt-bridge` subcommand to it. The coursier route is a development route and requires an explicit `cozy` version.
 
 Bridge governance:
 
