@@ -3,6 +3,7 @@ package org.goldenport.cozy
 import java.time.Instant
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import scala.collection.JavaConverters._
 
 import sbt._
 import sbt.Keys._
@@ -14,11 +15,80 @@ import scala.sys.process._
  *  version Mar. 25, 2026
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
- * @version Apr. 25, 2026
+ *  version Apr. 25, 2026
+ * @version May. 13, 2026
  * @author  ASAMI, Tomoharu
  */
+final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
+  def value(path: String): Option[String] = values.get(path).map(_.trim).filter(_.nonEmpty)
+  def boolean(path: String): Option[Boolean] = value(path).map(_.toLowerCase(java.util.Locale.ROOT)).collect {
+    case "true" | "yes" | "on" => true
+    case "false" | "no" | "off" => false
+  }
+  def list(path: String): Seq[String] = lists.getOrElse(path, Seq.empty).map(_.trim).filter(_.nonEmpty)
+  def mapUnder(path: String): Map[String, String] = {
+    val prefix = path + "."
+    values.collect {
+      case (k, v) if k.startsWith(prefix) && v.trim.nonEmpty => k.substring(prefix.length) -> v.trim
+    }
+  }
+}
+object CozyProjectConfig {
+  val empty: CozyProjectConfig = CozyProjectConfig(Map.empty, Map.empty)
+
+  def load(file: File): CozyProjectConfig =
+    if (file.isFile)
+      parse(Files.readAllLines(file.toPath, StandardCharsets.UTF_8).asScala.toSeq)
+    else
+      empty
+
+  def parse(lines: Seq[String]): CozyProjectConfig = {
+    var stack = Vector.empty[(Int, String)]
+    var values = Map.empty[String, String]
+    var lists = Map.empty[String, Vector[String]]
+
+    def currentPath: String = stack.map(_._2).mkString(".")
+
+    lines.foreach { raw =>
+      val line = if (raw.trim.startsWith("#")) "" else raw
+      if (line.trim.nonEmpty) {
+        val indent = line.takeWhile(_ == ' ').length
+        val trimmed = line.trim
+        if (trimmed.startsWith("- ")) {
+          stack = stack.dropRight(stack.reverse.takeWhile(_._1 >= indent).length)
+          val key = currentPath
+          if (key.nonEmpty)
+            lists = lists.updated(key, lists.getOrElse(key, Vector.empty) :+ _unquote(trimmed.substring(2).trim))
+        } else {
+          val n = trimmed.indexOf(':')
+          if (n >= 0) {
+            val key = trimmed.substring(0, n).trim
+            val rest = trimmed.substring(n + 1).trim
+            stack = stack.dropRight(stack.reverse.takeWhile(_._1 >= indent).length)
+            if (rest.isEmpty)
+              stack = stack :+ (indent -> key)
+            else
+              values = values.updated((stack.map(_._2) :+ key).mkString("."), _unquote(rest))
+          }
+        }
+      }
+    }
+    CozyProjectConfig(values, lists)
+  }
+
+  private def _unquote(s: String): String = {
+    val t = s.trim
+    if (t.length >= 2 && ((t.head == '"' && t.last == '"') || (t.head == '\'' && t.last == '\'')))
+      t.substring(1, t.length - 1)
+    else
+      t
+  }
+}
+
 object CozyPlugin extends AutoPlugin {
   object autoImport {
+    val cozyConfigFile = settingKey[File]("Project-local Cozy config file, normally .cozy/config.yaml")
+    val cozyProjectConfig = settingKey[CozyProjectConfig]("Parsed project-local Cozy config")
     val cozyConfig = settingKey[CozyConfig]("Configuration for sbt-cozy code generation")
     val cozySourceDir = settingKey[File]("Directory containing CML/cozy sources")
     val cozyTargetDir = settingKey[File]("Directory where Scala sources are generated")
@@ -42,11 +112,27 @@ object CozyPlugin extends AutoPlugin {
     val cozySarExtensionJars = settingKey[Seq[File]]("Injected extension jars to include under SAR /extension")
     val cozyManifestMetadata = settingKey[Map[String, String]]("Additional metadata fields written to the CAR component descriptor")
     val cozyLocalRepositoryDir = settingKey[File]("Local destination directory for cozyPublishCAR/cozyPublishSAR")
+    val cozyDistributionDir = settingKey[File]("Release distribution repository directory for cozyDistributeCAR/cozyDistributeSAR")
+    val cozyDistributionRequireReleaseVersion = settingKey[Boolean]("Reject distribution tasks for SNAPSHOT versions")
+    val cozyWarehouseDir = settingKey[File]("Warehouse directory indexed by cozyIndexWarehouse")
+    val cozyWarehouseMavenCoordinates = settingKey[Seq[String]]("Maven coordinates indexed from the warehouse")
+    val cozyWarehouseRepositoryArtifacts = settingKey[Seq[String]]("Repository artifact types indexed from the warehouse, such as car or sar")
+    val cozyWarehouseRepositoryModules = settingKey[Seq[String]]("Repository artifact module names indexed from the warehouse")
+    val cozyPublicationDir = settingKey[File]("Directory where cozyPublishProject writes BoK publication sources")
+    val cozyPublicationKind = settingKey[Option[String]]("Optional publication project kind: car, sar, sample-single, or sample-multi")
+    val cozyPublicationName = settingKey[Option[String]]("Optional publication stable name used for URLs and BoK keys")
+    val cozyPublicationTitle = settingKey[Option[String]]("Optional publication display title")
+    val cozyPublicationPath = settingKey[Option[String]]("Optional publication site path, such as samples/textus/tutorial")
 
     val cozyBuildCAR = taskKey[File]("Build CAR archive from compiled outputs")
     val cozyBuildSAR = taskKey[File]("Build SAR archive from cozy source definitions")
     val cozyPublishCAR = taskKey[File]("Copy CAR archive to cozy local repository")
     val cozyPublishSAR = taskKey[File]("Copy SAR archive to cozy local repository")
+    val cozyDistributeCAR = taskKey[File]("Copy CAR archive to the release distribution repository")
+    val cozyDistributeSAR = taskKey[File]("Copy SAR archive to the release distribution repository")
+    val cozyDistribute = taskKey[File]("Copy the configured archive type to the release distribution repository")
+    val cozyPublishProject = taskKey[File]("Generate SmartDox site BoK publication sources from this sbt project")
+    val cozyIndexWarehouse = taskKey[File]("Generate publish.d artifact and release metadata by indexing the warehouse")
     val cozyAppName = settingKey[String]("Application name used by cozyScaffoldApp.")
     val cozyAppRootDir = settingKey[File]("Target directory where cozyScaffoldApp writes the application scaffold.")
     val cozyScaffoldApp = taskKey[Seq[File]]("Generate an application root scaffold with component/ and subsystem/ modules.")
@@ -58,28 +144,51 @@ object CozyPlugin extends AutoPlugin {
   override def trigger: PluginTrigger = noTrigger
 
   override lazy val projectSettings: Seq[Def.Setting[_]] = Seq(
+    cozyConfigFile := baseDirectory.value / ".cozy" / "config.yaml",
+    cozyProjectConfig := CozyProjectConfig.load(cozyConfigFile.value),
     cozyConfig := CozyConfig.default,
-    cozySourceDir := (Compile / sourceDirectory).value / "cozy",
-    cozyTargetDir := (Compile / sourceManaged).value,
-    cozyGeneratorBackend := sys.env.getOrElse("SBT_COZY_GENERATOR_BACKEND", "cozy"),
-    cozyDelegateProjectDir := sys.env.get("SBT_COZY_PROJECT_DIR").map(file),
-    cozyDelegateCoursierVersion := sys.env.get("SBT_COZY_COURSIER_VERSION").map(_.trim).filter(_.nonEmpty),
-    cozyDelegateCommand := cozyDelegateCoursierVersion.value.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy")),
-    cozyCncfVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "goldenport-cncf").getOrElse("0.4.2-SNAPSHOT"),
-    cozySimpleModelingModelVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.simplemodeling", "simplemodeling-model").getOrElse("0.1.2-SNAPSHOT"),
-    cozyCncfCollaboratorApiVersion := _dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "cncf-collaborator-api").getOrElse("0.1.0-SNAPSHOT"),
-    cozySkipUnchangedGeneration := true,
+    cozySourceDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("generation.source_dir")).getOrElse((Compile / sourceDirectory).value / "cozy"),
+    cozyTargetDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("generation.target_dir")).getOrElse((Compile / sourceManaged).value),
+    cozyGeneratorBackend := cozyProjectConfig.value.value("generation.backend").orElse(sys.env.get("SBT_COZY_GENERATOR_BACKEND")).getOrElse("cozy"),
+    cozyDelegateProjectDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("generation.delegate.project_dir")).orElse(sys.env.get("SBT_COZY_PROJECT_DIR").map(file)),
+    cozyDelegateCoursierVersion := cozyProjectConfig.value.value("generation.delegate.coursier_version").orElse(sys.env.get("SBT_COZY_COURSIER_VERSION")).map(_.trim).filter(_.nonEmpty),
+    cozyDelegateCommand := {
+      val command = cozyProjectConfig.value.list("generation.delegate.command")
+      if (command.nonEmpty) command else cozyDelegateCoursierVersion.value.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy"))
+    },
+    cozyCncfVersion := cozyProjectConfig.value.value("generation.versions.cncf").getOrElse(_dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "goldenport-cncf").getOrElse("0.4.2-SNAPSHOT")),
+    cozySimpleModelingModelVersion := cozyProjectConfig.value.value("generation.versions.simplemodeling_model").getOrElse(_dependencyVersion((Compile / libraryDependencies).value, "org.simplemodeling", "simplemodeling-model").getOrElse("0.1.2-SNAPSHOT")),
+    cozyCncfCollaboratorApiVersion := cozyProjectConfig.value.value("generation.versions.cncf_collaborator_api").getOrElse(_dependencyVersion((Compile / libraryDependencies).value, "org.goldenport", "cncf-collaborator-api").getOrElse("0.1.0-SNAPSHOT")),
+    cozySkipUnchangedGeneration := cozyProjectConfig.value.boolean("generation.skip_unchanged").getOrElse(true),
 
-    cozyPackaging := "car",
-    cozyCarSourceDir := (Compile / sourceDirectory).value / "car",
-    cozyCarName := s"${moduleName.value}-${version.value}",
-    cozySarName := s"${moduleName.value}-${version.value}",
-    cozySpiJars := Seq.empty,
-    cozySarExtensionJars := Seq.empty,
-    cozyManifestMetadata := Map.empty,
-    cozyLocalRepositoryDir := target.value / "cozy-repository",
-    cozyAppName := moduleName.value,
-    cozyAppRootDir := baseDirectory.value / cozyAppName.value,
+    cozyPackaging := cozyProjectConfig.value.value("packaging.kind").getOrElse("car"),
+    cozyCarSourceDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("packaging.car.source_dir")).getOrElse((Compile / sourceDirectory).value / "car"),
+    cozyCarName := cozyProjectConfig.value.value("packaging.car.name").getOrElse(s"${moduleName.value}-${version.value}"),
+    cozySarName := cozyProjectConfig.value.value("packaging.sar.name").getOrElse(s"${moduleName.value}-${version.value}"),
+    cozySpiJars := cozyProjectConfig.value.list("packaging.car.spi_jars").map(x => _configFile(baseDirectory.value, Some(x)).getOrElse(file(x))),
+    cozySarExtensionJars := cozyProjectConfig.value.list("packaging.sar.extension_jars").map(x => _configFile(baseDirectory.value, Some(x)).getOrElse(file(x))),
+    cozyManifestMetadata := cozyProjectConfig.value.mapUnder("packaging.car.manifest_metadata"),
+    cozyLocalRepositoryDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("packaging.local_repository_dir")).getOrElse(target.value / "cozy-repository"),
+    cozyDistributionDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("distribution.repository")).getOrElse(target.value / "cozy-distribution"),
+    cozyDistributionRequireReleaseVersion := cozyProjectConfig.value.boolean("distribution.require_release_version").getOrElse(true),
+    cozyWarehouseDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("warehouse.repository")).getOrElse(cozyDistributionDir.value),
+    cozyWarehouseMavenCoordinates := {
+      val configured = cozyProjectConfig.value.list("warehouse.maven.coordinates")
+      if (configured.nonEmpty) configured
+      else Seq(_defaultMavenCoordinate(organization.value, moduleName.value, crossPaths.value, scalaBinaryVersion.value, sbtPlugin.value, sbtBinaryVersion.value))
+    },
+    cozyWarehouseRepositoryArtifacts := cozyProjectConfig.value.list("warehouse.repository_artifacts.include"),
+    cozyWarehouseRepositoryModules := {
+      val configured = cozyProjectConfig.value.list("warehouse.repository_artifacts.modules")
+      if (configured.nonEmpty) configured else Seq(cozyPublicationName.value.getOrElse(moduleName.value))
+    },
+    cozyPublicationDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("publication.output")).getOrElse(target.value / "publish.d"),
+    cozyPublicationKind := cozyProjectConfig.value.value("publication.kind"),
+    cozyPublicationName := cozyProjectConfig.value.value("publication.name"),
+    cozyPublicationTitle := cozyProjectConfig.value.value("publication.title"),
+    cozyPublicationPath := cozyProjectConfig.value.value("publication.path"),
+    cozyAppName := cozyProjectConfig.value.value("scaffold.app_name").getOrElse(moduleName.value),
+    cozyAppRootDir := _configFile(baseDirectory.value, cozyProjectConfig.value.value("scaffold.app_root_dir")).getOrElse(baseDirectory.value / cozyAppName.value),
 
     cozyGenerate := {
       val sourceDir = cozySourceDir.value
@@ -244,6 +353,75 @@ object CozyPlugin extends AutoPlugin {
       destination
     },
 
+    cozyDistributeCAR := {
+      _validateReleaseDistribution(version.value, cozyDistributionRequireReleaseVersion.value)
+      val archive = cozyBuildCAR.value
+      val destination = _repositoryArtifactDestination(cozyDistributionDir.value, "car", version.value, archive)
+      IO.createDirectory(destination.getParentFile)
+      IO.copyFile(archive, destination, preserveLastModified = true)
+      streams.value.log.info(s"[sbt-cozy] distributed CAR to ${destination.getAbsolutePath}")
+      destination
+    },
+
+    cozyDistributeSAR := {
+      _validateReleaseDistribution(version.value, cozyDistributionRequireReleaseVersion.value)
+      val archive = cozyBuildSAR.value
+      val destination = _repositoryArtifactDestination(cozyDistributionDir.value, "sar", version.value, archive)
+      IO.createDirectory(destination.getParentFile)
+      IO.copyFile(archive, destination, preserveLastModified = true)
+      streams.value.log.info(s"[sbt-cozy] distributed SAR to ${destination.getAbsolutePath}")
+      destination
+    },
+
+    cozyDistribute := Def.taskDyn[File] {
+      cozyPackaging.value.trim.toLowerCase(java.util.Locale.ROOT) match {
+        case "car" => cozyDistributeCAR
+        case "sar" => cozyDistributeSAR
+        case other => Def.task { sys.error(s"[sbt-cozy] invalid cozyPackaging '${other}'. expected 'car' or 'sar'"): File }
+      }
+    }.value,
+
+    cozyPublishProject := {
+      val out = cozyPublicationDir.value
+      CozySbtBridge.publishProject(
+        projectDir = baseDirectory.value,
+        saveDir = out,
+        kind = cozyPublicationKind.value,
+        name = cozyPublicationName.value.getOrElse(moduleName.value),
+        title = cozyPublicationTitle.value,
+        publicationPath = cozyPublicationPath.value,
+        organization = organization.value,
+        version = version.value,
+        scalaVersion = scalaVersion.value,
+        sbtVersion = appConfiguration.value.provider.id.version,
+        baseDir = baseDirectory.value,
+        delegateProjectDir = cozyDelegateProjectDir.value,
+        delegateCommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      streams.value.log.info(s"[sbt-cozy] generated publication sources: ${out.getAbsolutePath}")
+      out
+    },
+
+    cozyIndexWarehouse := {
+      val out = cozyPublicationDir.value
+      CozySbtBridge.indexWarehouse(
+        warehouseDir = cozyWarehouseDir.value,
+        saveDir = out,
+        name = cozyPublicationName.value.getOrElse(moduleName.value),
+        title = cozyPublicationTitle.value,
+        mavenCoordinates = cozyWarehouseMavenCoordinates.value,
+        repositoryArtifacts = cozyWarehouseRepositoryArtifacts.value,
+        repositoryModules = cozyWarehouseRepositoryModules.value,
+        baseDir = baseDirectory.value,
+        delegateProjectDir = cozyDelegateProjectDir.value,
+        delegateCommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      streams.value.log.info(s"[sbt-cozy] indexed warehouse metadata into: ${out.getAbsolutePath}")
+      out
+    },
+
     cozyScaffoldApp := {
       val generated = CozyAppScaffold.generate(
         CozyAppScaffold.Spec(
@@ -282,6 +460,43 @@ object CozyPlugin extends AutoPlugin {
 
     Compile / sourceGenerators += cozyGenerate.taskValue
   )
+
+  private def _validateReleaseDistribution(version: String, requireReleaseVersion: Boolean): Unit =
+    if (requireReleaseVersion && version.toUpperCase(java.util.Locale.ROOT).contains("SNAPSHOT"))
+      sys.error(s"[sbt-cozy] release distribution rejects SNAPSHOT version: ${version}")
+
+  private def _repositoryArtifactDestination(root: File, kind: String, version: String, archive: File): File = {
+    val module = _repositoryArtifactModule(archive, kind, version)
+    root / "repository" / kind / module / version / s"$module-$version.$kind"
+  }
+
+  private def _repositoryArtifactModule(archive: File, kind: String, version: String): String = {
+    val suffix = s".$kind"
+    val base0 = archive.getName.stripSuffix(suffix)
+    val versionSuffix = s"-$version"
+    if (base0.endsWith(versionSuffix)) base0.substring(0, base0.length - versionSuffix.length) else base0
+  }
+
+  private def _defaultMavenCoordinate(
+    organization: String,
+    moduleName: String,
+    crossPaths: Boolean,
+    scalaBinaryVersion: String,
+    isSbtPlugin: Boolean,
+    sbtBinaryVersion: String
+  ): String = {
+    val artifact =
+      if (isSbtPlugin) s"${moduleName}_${scalaBinaryVersion}_${sbtBinaryVersion}"
+      else if (crossPaths) s"${moduleName}_${scalaBinaryVersion}"
+      else moduleName
+    s"$organization:$artifact"
+  }
+
+  private def _configFile(base: File, value: Option[String]): Option[File] =
+    value.map { x =>
+      val f = file(x)
+      if (f.isAbsolute) f else base / x
+    }
 
   private def _dependencyVersion(deps: Seq[ModuleID], org: String, moduleBaseName: String): Option[String] =
     deps.collectFirst {
@@ -1238,6 +1453,80 @@ private[cozy] object CozySbtBridge {
             _csv_arg("source-files", sourceFiles) ++
             _csv_arg("extension-jars", extensionJars.map(_.getAbsolutePath)) ++
             applicationConf.toVector.map(f => s"--application-conf=${f.getAbsolutePath}")
+      ),
+      baseDir,
+      delegateProjectDir,
+      delegateCommand,
+      log
+    )
+  }
+
+  def publishProject(
+    projectDir: File,
+    saveDir: File,
+    kind: Option[String],
+    name: String,
+    title: Option[String],
+    publicationPath: Option[String],
+    organization: String,
+    version: String,
+    scalaVersion: String,
+    sbtVersion: String,
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    _run(
+      _request(
+        action = "publish-project",
+        arguments =
+          Vector(
+            projectDir.getAbsolutePath,
+            s"--save=${saveDir.getAbsolutePath}",
+            s"--name=$name",
+            s"--organization=$organization",
+            s"--version=$version",
+            s"--scala-version=$scalaVersion",
+            s"--sbt-version=$sbtVersion"
+          ) ++
+            kind.toVector.map(x => s"--kind=$x") ++
+            title.toVector.map(x => s"--title=$x") ++
+            publicationPath.toVector.map(x => s"--path=$x")
+      ),
+      baseDir,
+      delegateProjectDir,
+      delegateCommand,
+      log
+    )
+  }
+
+  def indexWarehouse(
+    warehouseDir: File,
+    saveDir: File,
+    name: String,
+    title: Option[String],
+    mavenCoordinates: Seq[String],
+    repositoryArtifacts: Seq[String],
+    repositoryModules: Seq[String],
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    _run(
+      _request(
+        action = "index-warehouse",
+        arguments =
+          Vector(
+            warehouseDir.getAbsolutePath,
+            s"--save=${saveDir.getAbsolutePath}",
+            s"--name=$name"
+          ) ++
+            title.toVector.map(x => s"--title=$x") ++
+            _csv_arg("maven-coordinates", mavenCoordinates) ++
+            _csv_arg("repository-artifacts", repositoryArtifacts) ++
+            _csv_arg("repository-modules", repositoryModules)
       ),
       baseDir,
       delegateProjectDir,

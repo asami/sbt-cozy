@@ -8,7 +8,9 @@
 - Generate Scala sources via `cozy` through `sbt-bridge v1` by default
 - Build CAR (`.car`) and SAR (`.sar`) archives
 - Use descriptor-first CAR/SAR packaging
-- Publish CAR/SAR artifacts into a local repository with `cozyPublishCAR` and `cozyPublishSAR`
+- Publish CAR/SAR artifacts into a local development repository with `cozyPublishCAR` and `cozyPublishSAR`
+- Distribute release CAR/SAR artifacts with explicit `cozyDistribute*` tasks
+- Index warehouse artifacts into `publish.d` metadata with `cozyIndexWarehouse`
 
 ## Plugin Keys
 
@@ -43,13 +45,23 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 - `cozySarExtensionJars`: additional JARs included under `extension/` in SAR
 - `cozyManifestMetadata`: extra metadata passed to `cozy` packaging
 - `cozyLocalRepositoryDir`: destination directory for `cozyPublish*` tasks (default: `target/cozy-repository`)
+- `cozyDistributionDir`: release distribution repository directory (default: `target/cozy-distribution`)
+- `cozyDistributionRequireReleaseVersion`: reject `SNAPSHOT` versions during distribution (default: `true`)
+- `cozyWarehouseDir`: warehouse root indexed by `cozyIndexWarehouse` (default: `warehouse.repository`, then `cozyDistributionDir`)
+- `cozyWarehouseMavenCoordinates`: Maven coordinates indexed from `warehouse/maven`
+- `cozyWarehouseRepositoryArtifacts`: repository artifact types indexed from warehouse, such as `car` and `sar`
+- `cozyWarehouseRepositoryModules`: repository artifact module names indexed from warehouse
 
 Tasks:
 
 - `cozyBuildCAR`: build a CAR archive
 - `cozyBuildSAR`: build a SAR archive
-- `cozyPublishCAR`: copy the CAR built by `cozyBuildCAR` into the local repository
-- `cozyPublishSAR`: copy the SAR built by `cozyBuildSAR` into the local repository
+- `cozyPublishCAR`: copy the CAR built by `cozyBuildCAR` into the development local repository
+- `cozyPublishSAR`: copy the SAR built by `cozyBuildSAR` into the development local repository
+- `cozyDistributeCAR`: copy the CAR built by `cozyBuildCAR` into the release distribution repository
+- `cozyDistributeSAR`: copy the SAR built by `cozyBuildSAR` into the release distribution repository
+- `cozyDistribute`: distribute CAR or SAR based on `cozyPackaging`
+- `cozyIndexWarehouse`: generate Maven/CAR/SAR release metadata in `publish.d` by reading the warehouse
 
 ## Backend Modes
 
@@ -126,6 +138,68 @@ sbt cozyPublishCAR
 sbt cozyPublishSAR
 ```
 
+Distribute release CAR/SAR archives into the configured release repository:
+
+```bash
+sbt cozyDistributeCAR
+sbt cozyDistributeSAR
+sbt cozyDistribute
+```
+
+`cozyDistribute*` rejects `SNAPSHOT` versions by default. Use it for release distribution only; keep `cozyPublishCAR/SAR` for development-local publication.
+
+Generate BoK publication sources from the sbt project:
+
+```bash
+sbt cozyPublishProject
+```
+
+Generate BoK artifact/release metadata from the warehouse:
+
+```bash
+sbt cozyIndexWarehouse
+```
+
+Project-local defaults can be written in `.cozy/config.yaml`. The same values can also be written as sbt settings in `build.sbt`; explicit `build.sbt` settings take precedence over `.cozy/config.yaml`.
+
+```yaml
+generation:
+  source_dir: src/main/cozy
+  backend: cozy
+  skip_unchanged: true
+
+packaging:
+  kind: car
+  car:
+    source_dir: src/main/car
+    manifest_metadata:
+      component: textus
+
+publication:
+  name: textus-tutorial
+  title: Textus Tutorial
+  path: samples/textus/tutorial
+  kind: sample-multi
+  output: /Users/asami/src/dev2025/simplemodeling-org/publish.d
+  samples_dir: samples
+
+distribution:
+  repository: /Users/asami/src/maven-repository
+  require_release_version: true
+
+warehouse:
+  repository: /Users/asami/src/maven-repository
+  maven:
+    coordinates:
+      - org.example:textus-tutorial_3
+  repository_artifacts:
+    include:
+      - car
+      - sar
+    modules:
+      - textus-tutorial
+```
+
 Example settings:
 
 ```scala
@@ -151,7 +225,7 @@ Recommended usage:
 
 - normal use: install/update the `cozy` command and let `sbt-cozy` call it directly
 - development against an in-progress `cozy` repo: set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))`
-- development against a published local SNAPSHOT: run `sbt publishLocal` in `cozy`, then set `cozyDelegateCoursierVersion := Some("0.2.16-SNAPSHOT")` or `SBT_COZY_COURSIER_VERSION=0.2.16-SNAPSHOT`
+- development against a published local SNAPSHOT: run `sbt publishLocal` in `cozy`, then set `cozyDelegateCoursierVersion := Some("0.2.17-SNAPSHOT")` or `SBT_COZY_COURSIER_VERSION=0.2.17-SNAPSHOT`
 
 The default bridge route always launches the shell command `cozy` and passes the `sbt-bridge` subcommand to it. The coursier route is a development route and requires an explicit `cozy` version.
 

@@ -5,7 +5,9 @@
   "supportedActions": [
     "generate",
     "package-car",
-    "package-sar"
+    "package-sar",
+    "publish-project",
+    "index-warehouse"
   ],
   "request": {
     "requiredFields": [

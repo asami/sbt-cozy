@@ -5,7 +5,8 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /*
  * @since   Apr. 23, 2026
- * @version Apr. 23, 2026
+ *  version Apr. 23, 2026
+ * @version May. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 final class BridgeContractSpec extends AnyFunSuite {
@@ -23,6 +24,8 @@ final class BridgeContractSpec extends AnyFunSuite {
       "request-generate.json",
       "request-package-car.json",
       "request-package-sar.json",
+      "request-publish-project.json",
+      "request-index-warehouse.json",
       "response-success.json",
       "response-error.json"
     ).foreach { name =>
@@ -66,6 +69,35 @@ final class BridgeContractSpec extends AnyFunSuite {
       )
     )
     val expected = Files.readString(fixtureDir.resolve("request-package-sar.json"))
+    assert(_normalizeJson(json) == _normalizeJson(expected))
+  }
+
+  test("generated bridge request JSON matches canonical publish-project fixture") {
+    val json = CozySbtBridge.renderRequestJsonForTest(
+      action = "publish-project",
+      arguments = Vector(
+        "/tmp/sample-project",
+        "--save=/tmp/publish.d",
+        "--kind=car"
+      )
+    )
+    val expected = Files.readString(fixtureDir.resolve("request-publish-project.json"))
+    assert(_normalizeJson(json) == _normalizeJson(expected))
+  }
+
+  test("generated bridge request JSON matches canonical index-warehouse fixture") {
+    val json = CozySbtBridge.renderRequestJsonForTest(
+      action = "index-warehouse",
+      arguments = Vector(
+        "/tmp/warehouse",
+        "--save=/tmp/publish.d",
+        "--name=textus-tutorial",
+        "--maven-coordinates=org.example:textus-tutorial_3",
+        "--repository-artifacts=car,sar",
+        "--repository-modules=textus-tutorial"
+      )
+    )
+    val expected = Files.readString(fixtureDir.resolve("request-index-warehouse.json"))
     assert(_normalizeJson(json) == _normalizeJson(expected))
   }
 

@@ -12,7 +12,8 @@ import sbt._
  * @since   Mar. 22, 2026
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
- * @version Apr. 23, 2026
+ *  version Apr. 23, 2026
+ * @version May. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -51,6 +52,62 @@ final class CozyConfigValidatorSpec extends CozyTestBase {
       case Left(message) => assert(message.contains("invalid packagePrefix"))
       case Right(_) => fail("expected invalid packagePrefix error")
     }
+  }
+}
+
+final class CozyProjectConfigSpec extends CozyTestBase {
+  test("parses project-local .cozy/config.yaml") {
+    val config = CozyProjectConfig.parse(
+      Seq(
+        "generation:",
+        "  source_dir: src/main/cozy",
+        "  skip_unchanged: false",
+        "  delegate:",
+        "    command:",
+        "      - cozy",
+        "      - --batch",
+        "publication:",
+        "  name: cncf-samples",
+        "  title: Textus Tutorial",
+        "  path: samples/textus/tutorial",
+        "  output: /Users/asami/src/dev2025/simplemodeling-org/publish.d",
+        "distribution:",
+        "  repository: /Users/asami/src/maven-repository",
+        "  require_release_version: true",
+        "warehouse:",
+        "  repository: /Users/asami/src/maven-repository",
+        "  maven:",
+        "    coordinates:",
+        "      - org.goldenport:sbt-cozy_2.12_1.0",
+        "      - org.simplemodeling:simplemodeling-model_3",
+        "  repository_artifacts:",
+        "    include:",
+        "      - car",
+        "      - sar",
+        "    modules:",
+        "      - textus-tutorial",
+        "packaging:",
+        "  car:",
+        "    manifest_metadata:",
+        "      component: textus",
+        "      bounded_context: default"
+      )
+    )
+
+    assert(config.value("generation.source_dir").contains("src/main/cozy"))
+    assert(config.boolean("generation.skip_unchanged").contains(false))
+    assert(config.list("generation.delegate.command") == Seq("cozy", "--batch"))
+    assert(config.value("publication.name").contains("cncf-samples"))
+    assert(config.value("publication.title").contains("Textus Tutorial"))
+    assert(config.value("publication.path").contains("samples/textus/tutorial"))
+    assert(config.value("publication.output").contains("/Users/asami/src/dev2025/simplemodeling-org/publish.d"))
+    assert(config.value("distribution.repository").contains("/Users/asami/src/maven-repository"))
+    assert(config.boolean("distribution.require_release_version").contains(true))
+    assert(config.value("warehouse.repository").contains("/Users/asami/src/maven-repository"))
+    assert(config.list("warehouse.maven.coordinates") == Seq("org.goldenport:sbt-cozy_2.12_1.0", "org.simplemodeling:simplemodeling-model_3"))
+    assert(config.list("warehouse.repository_artifacts.include") == Seq("car", "sar"))
+    assert(config.list("warehouse.repository_artifacts.modules") == Seq("textus-tutorial"))
+    assert(config.mapUnder("packaging.car.manifest_metadata") == Map("component" -> "textus", "bounded_context" -> "default"))
   }
 }
 
@@ -259,7 +316,7 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
 
   test("bridge can use explicit coursier version during development") {
     withTempDir("sbt-cozy-delegate") { dir =>
-      val command = CozySbtBridge.coursierCommand("0.2.16-SNAPSHOT")
+      val command = CozySbtBridge.coursierCommand("0.2.17-SNAPSHOT")
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
         baseDir = dir,
         delegateProjectDir = None,
@@ -270,10 +327,28 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.take(2) == Seq("cs", "launch"))
       assert(resolved.contains("ivy2Local"))
-      assert(resolved.contains("org.simplemodeling:cozy_2.12:0.2.16-SNAPSHOT"))
+      assert(resolved.contains("org.simplemodeling:cozy_2.12:0.2.17-SNAPSHOT"))
       assert(resolved.contains("cozy.Cozy"))
       assert(resolved.contains("--"))
       assert(resolved.takeRight(2).head == "v1")
+      assert(resolved.last.startsWith("--request="))
+    }
+  }
+
+
+  test("bridge delegates publish-project requests") {
+    withTempDir("sbt-cozy-publish-project-delegate") { dir =>
+      val out = dir / "publish.d"
+      val (cwd, resolved) = CozySbtBridge.resolveForTest(
+        baseDir = dir,
+        delegateProjectDir = None,
+        delegateCommand = Seq("cozy"),
+        action = "publish-project",
+        arguments = Vector(dir.getAbsolutePath, s"--save=${out.getAbsolutePath}", "--kind=sample-single")
+      )
+      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
+      assert(resolved.head == "cozy")
+      assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
       assert(resolved.last.startsWith("--request="))
     }
   }
