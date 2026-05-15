@@ -6,7 +6,7 @@ contract consumed by `sbt-cozy`.
 Contract rules:
 - protocol: `sbt-bridge`
 - version: `v1`
-- supported actions: `generate`, `package-car`, `package-sar`, `publish-project`, `index-warehouse`
+- supported actions: `generate`, `package-car`, `package-sar`, `publish-project`, `distribute-samples`, `index-warehouse`
 - additive request fields are allowed only if existing consumers can ignore them
 - removals, renames, or semantic changes require `v2`
 

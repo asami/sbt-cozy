@@ -13,7 +13,8 @@ import sbt._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
- * @version May. 13, 2026
+ *  version May. 13, 2026
+ * @version May. 16, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -71,6 +72,7 @@ final class CozyProjectConfigSpec extends CozyTestBase {
         "  title: Textus Tutorial",
         "  path: samples/textus/tutorial",
         "  output: /Users/asami/src/dev2025/simplemodeling-org/publish.d",
+        "  samples_dir: samples",
         "distribution:",
         "  repository: /Users/asami/src/maven-repository",
         "  require_release_version: true",
@@ -85,6 +87,9 @@ final class CozyProjectConfigSpec extends CozyTestBase {
         "      - car",
         "      - sar",
         "    modules:",
+        "      - textus-tutorial",
+        "  download:",
+        "    samples:",
         "      - textus-tutorial",
         "packaging:",
         "  car:",
@@ -101,13 +106,58 @@ final class CozyProjectConfigSpec extends CozyTestBase {
     assert(config.value("publication.title").contains("Textus Tutorial"))
     assert(config.value("publication.path").contains("samples/textus/tutorial"))
     assert(config.value("publication.output").contains("/Users/asami/src/dev2025/simplemodeling-org/publish.d"))
+    assert(config.value("publication.samples_dir").contains("samples"))
     assert(config.value("distribution.repository").contains("/Users/asami/src/maven-repository"))
     assert(config.boolean("distribution.require_release_version").contains(true))
     assert(config.value("warehouse.repository").contains("/Users/asami/src/maven-repository"))
     assert(config.list("warehouse.maven.coordinates") == Seq("org.goldenport:sbt-cozy_2.12_1.0", "org.simplemodeling:simplemodeling-model_3"))
     assert(config.list("warehouse.repository_artifacts.include") == Seq("car", "sar"))
     assert(config.list("warehouse.repository_artifacts.modules") == Seq("textus-tutorial"))
+    assert(config.list("warehouse.download.samples") == Seq("textus-tutorial"))
     assert(config.mapUnder("packaging.car.manifest_metadata") == Map("component" -> "textus", "bounded_context" -> "default"))
+  }
+
+  test("resolves publication path from project metadata when local config omits it") {
+    val config = CozyProjectConfig.parse(
+      Seq(
+        "publication:",
+        "  name: textus-tutorial"
+      )
+    )
+    val projectmetadata = CozyProjectConfig.parse(
+      Seq(
+        "project:",
+        "  name: textus-tutorial",
+        "  path: textus/tutorial/textus-tutorial"
+      )
+    )
+    val configwithpath = CozyProjectConfig.parse(
+      Seq(
+        "publication:",
+        "  path: textus/tutorial/custom"
+      )
+    )
+
+    assert(CozyPlugin.publication_path(config, projectmetadata).contains("textus/tutorial/textus-tutorial"))
+    assert(CozyPlugin.publication_path(configwithpath, projectmetadata).contains("textus/tutorial/custom"))
+  }
+
+  test("renders planned sample archives as a compact tree") {
+    withTempDir() { warehouse =>
+      val root = warehouse / "repository" / "download" / "textus" / "tutorial" / "textus-tutorial"
+      val files = Seq(
+        root / "0.1.0" / "textus-tutorial-0.1.0.zip",
+        root / "0.1.0" / "01-minimal" / "01-minimal-0.1.0.zip"
+      )
+
+      assert(CozyPlugin.sample_archive_tree_lines(warehouse, root, files) == Seq(
+        "repository/download/textus/tutorial/textus-tutorial",
+        "+-- 0.1.0",
+        "    |-- 01-minimal",
+        "    |   +-- 01-minimal-0.1.0.zip",
+        "    +-- textus-tutorial-0.1.0.zip"
+      ))
+    }
   }
 }
 
@@ -301,9 +351,9 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
       val source = write(dir / "src" / "model.cml", "package app\nentity User\n")
       val saveDir = dir / "out"
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        baseDir = dir,
-        delegateProjectDir = None,
-        delegateCommand = Seq("cozy"),
+        basedir = dir,
+        delegateprojectdir = None,
+        delegatecommand = Seq("cozy"),
         action = "generate",
         arguments = Vector("modeler-scala", source.getAbsolutePath, s"--save=${saveDir.getAbsolutePath}")
       )
@@ -318,9 +368,9 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
     withTempDir("sbt-cozy-delegate") { dir =>
       val command = CozySbtBridge.coursierCommand("0.2.17-SNAPSHOT")
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        baseDir = dir,
-        delegateProjectDir = None,
-        delegateCommand = command,
+        basedir = dir,
+        delegateprojectdir = None,
+        delegatecommand = command,
         action = "generate",
         arguments = Vector("modeler-scala", "/tmp/model.cml", "--save=/tmp/out")
       )
@@ -340,9 +390,9 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
     withTempDir("sbt-cozy-publish-project-delegate") { dir =>
       val out = dir / "publish.d"
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        baseDir = dir,
-        delegateProjectDir = None,
-        delegateCommand = Seq("cozy"),
+        basedir = dir,
+        delegateprojectdir = None,
+        delegatecommand = Seq("cozy"),
         action = "publish-project",
         arguments = Vector(dir.getAbsolutePath, s"--save=${out.getAbsolutePath}", "--kind=sample-single")
       )
@@ -358,9 +408,9 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
       val cozyDir = dir / "cozy"
       write(cozyDir / "build.sbt", """name := "cozy"""")
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        baseDir = dir,
-        delegateProjectDir = Some(cozyDir),
-        delegateCommand = Seq("cozy"),
+        basedir = dir,
+        delegateprojectdir = Some(cozyDir),
+        delegatecommand = Seq("cozy"),
         action = "package-sar",
         arguments = Vector("--save=/tmp/sample.sar")
       )
@@ -412,9 +462,9 @@ final class CozyPackagingSpec extends CozyTestBase {
       val archive = dir / "out" / "sample.sar"
       val command = Seq("cozy")
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        baseDir = dir,
-        delegateProjectDir = None,
-        delegateCommand = command,
+        basedir = dir,
+        delegateprojectdir = None,
+        delegatecommand = command,
         action = "package-sar",
         arguments = Vector(
           s"--save=${archive.getAbsolutePath}",

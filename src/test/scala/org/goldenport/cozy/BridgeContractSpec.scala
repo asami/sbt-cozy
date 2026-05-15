@@ -5,17 +5,16 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /*
  * @since   Apr. 23, 2026
- *  version Apr. 23, 2026
- * @version May. 13, 2026
+ * @version May. 16, 2026
  * @author  ASAMI, Tomoharu
  */
 final class BridgeContractSpec extends AnyFunSuite {
 
-  private def _normalizeJson(p: String): String =
+  private def _normalize_json(p: String): String =
     p.filterNot(_.isWhitespace)
 
-  private val base = Paths.get(sys.props("user.dir")).toAbsolutePath.normalize()
-  private val fixtureDir = base.resolve("bridge-fixtures").resolve("sbt-bridge").resolve("v1")
+  private val _base = Paths.get(sys.props("user.dir")).toAbsolutePath.normalize()
+  private val _fixture_dir = _base.resolve("bridge-fixtures").resolve("sbt-bridge").resolve("v1")
 
   test("vendored bridge fixtures exist") {
     Vector(
@@ -25,11 +24,12 @@ final class BridgeContractSpec extends AnyFunSuite {
       "request-package-car.json",
       "request-package-sar.json",
       "request-publish-project.json",
+      "request-distribute-samples.json",
       "request-index-warehouse.json",
       "response-success.json",
       "response-error.json"
     ).foreach { name =>
-      assert(Files.isRegularFile(fixtureDir.resolve(name)), s"missing fixture: $name")
+      assert(Files.isRegularFile(_fixture_dir.resolve(name)), s"missing fixture: $name")
     }
   }
 
@@ -38,8 +38,8 @@ final class BridgeContractSpec extends AnyFunSuite {
       action = "generate",
       arguments = Vector("modeler-scala", "/tmp/sample.cml", "--save=/tmp/generated")
     )
-    val expected = Files.readString(fixtureDir.resolve("request-generate.json"))
-    assert(_normalizeJson(json) == _normalizeJson(expected))
+    val expected = Files.readString(_fixture_dir.resolve("request-generate.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
   }
 
   test("generated bridge request JSON matches canonical package-car fixture") {
@@ -53,8 +53,8 @@ final class BridgeContractSpec extends AnyFunSuite {
         "--main-jar=/tmp/component-main.jar"
       )
     )
-    val expected = Files.readString(fixtureDir.resolve("request-package-car.json"))
-    assert(_normalizeJson(json) == _normalizeJson(expected))
+    val expected = Files.readString(_fixture_dir.resolve("request-package-car.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
   }
 
   test("generated bridge request JSON matches canonical package-sar fixture") {
@@ -68,8 +68,8 @@ final class BridgeContractSpec extends AnyFunSuite {
         "--source-files=subsystem-descriptor.yaml"
       )
     )
-    val expected = Files.readString(fixtureDir.resolve("request-package-sar.json"))
-    assert(_normalizeJson(json) == _normalizeJson(expected))
+    val expected = Files.readString(_fixture_dir.resolve("request-package-sar.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
   }
 
   test("generated bridge request JSON matches canonical publish-project fixture") {
@@ -81,8 +81,25 @@ final class BridgeContractSpec extends AnyFunSuite {
         "--kind=car"
       )
     )
-    val expected = Files.readString(fixtureDir.resolve("request-publish-project.json"))
-    assert(_normalizeJson(json) == _normalizeJson(expected))
+    val expected = Files.readString(_fixture_dir.resolve("request-publish-project.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
+  }
+
+  test("generated bridge request JSON matches canonical distribute-samples fixture") {
+    val json = CozySbtBridge.renderRequestJsonForTest(
+      action = "distribute-samples",
+      arguments = Vector(
+        "/tmp/sample-project",
+        "--warehouse=/tmp/warehouse",
+        "--name=textus-tutorial",
+        "--version=0.1.0",
+        "--path=textus/tutorial/textus-tutorial",
+        "--samples-dir=/tmp/sample-project/samples",
+        "--dry-run"
+      )
+    )
+    val expected = Files.readString(_fixture_dir.resolve("request-distribute-samples.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
   }
 
   test("generated bridge request JSON matches canonical index-warehouse fixture") {
@@ -94,17 +111,18 @@ final class BridgeContractSpec extends AnyFunSuite {
         "--name=textus-tutorial",
         "--maven-coordinates=org.example:textus-tutorial_3",
         "--repository-artifacts=car,sar",
-        "--repository-modules=textus-tutorial"
+        "--repository-modules=textus-tutorial",
+        "--download-samples=textus-tutorial"
       )
     )
-    val expected = Files.readString(fixtureDir.resolve("request-index-warehouse.json"))
-    assert(_normalizeJson(json) == _normalizeJson(expected))
+    val expected = Files.readString(_fixture_dir.resolve("request-index-warehouse.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
   }
 
   test("consumer-side request parsing tolerates additive v1 fields") {
-    val baseJson = Files.readString(fixtureDir.resolve("request-generate.json"))
-    val extended = baseJson.replace("\n}", ",\n  \"extra\": \"ignored\"\n}\n")
-    val normalized = _normalizeJson(extended)
+    val basejson = Files.readString(_fixture_dir.resolve("request-generate.json"))
+    val extended = basejson.replace("\n}", ",\n  \"extra\": \"ignored\"\n}\n")
+    val normalized = _normalize_json(extended)
 
     assert(normalized.contains("\"version\":\"v1\""))
     assert(normalized.contains("\"action\":\"generate\""))

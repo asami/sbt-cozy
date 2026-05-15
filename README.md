@@ -9,7 +9,7 @@
 - Build CAR (`.car`) and SAR (`.sar`) archives
 - Use descriptor-first CAR/SAR packaging
 - Publish CAR/SAR artifacts into a local development repository with `cozyPublishCAR` and `cozyPublishSAR`
-- Distribute release CAR/SAR artifacts with explicit `cozyDistribute*` tasks
+- Distribute release CAR/SAR artifacts and sample ZIP downloads with explicit `cozyDistribute*` tasks
 - Index warehouse artifacts into `publish.d` metadata with `cozyIndexWarehouse`
 
 ## Plugin Keys
@@ -51,6 +51,7 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 - `cozyWarehouseMavenCoordinates`: Maven coordinates indexed from `warehouse/maven`
 - `cozyWarehouseRepositoryArtifacts`: repository artifact types indexed from warehouse, such as `car` and `sar`
 - `cozyWarehouseRepositoryModules`: repository artifact module names indexed from warehouse
+- `cozyPublicationPath`: publication site path. `.cozy/config.yaml` `publication.path` wins; `project.yaml` `project.path` is the fallback.
 
 Tasks:
 
@@ -58,10 +59,12 @@ Tasks:
 - `cozyBuildSAR`: build a SAR archive
 - `cozyPublishCAR`: copy the CAR built by `cozyBuildCAR` into the development local repository
 - `cozyPublishSAR`: copy the SAR built by `cozyBuildSAR` into the development local repository
-- `cozyDistributeCAR`: copy the CAR built by `cozyBuildCAR` into the release distribution repository
-- `cozyDistributeSAR`: copy the SAR built by `cozyBuildSAR` into the release distribution repository
-- `cozyDistribute`: distribute CAR or SAR based on `cozyPackaging`
-- `cozyIndexWarehouse`: generate Maven/CAR/SAR release metadata in `publish.d` by reading the warehouse
+- `cozyDistributeCAR`: copy the CAR built by `cozyBuildCAR` into `warehouse/repository/car`
+- `cozyDistributeSAR`: copy the SAR built by `cozyBuildSAR` into `warehouse/repository/sar`
+- `cozyDistributeSamples`: copy collection and child sample ZIP archives into `warehouse/repository/download/<publication.path>`; fallback is `warehouse/repository/download/samples/<publication.name>`
+- `cozyPlanDistributeSamples`: print planned sample ZIP archive paths as a tree without writing archives; SNAPSHOT versions are allowed
+- `cozyDistribute`: distribute CAR or SAR based on `cozyPackaging`; use `cozyDistributeSamples` for `sample-multi`
+- `cozyIndexWarehouse`: generate Maven/CAR/SAR/download release metadata in `publish.d` by reading the warehouse
 
 ## Backend Modes
 
@@ -138,13 +141,16 @@ sbt cozyPublishCAR
 sbt cozyPublishSAR
 ```
 
-Distribute release CAR/SAR archives into the configured release repository:
+Distribute release archives into the configured warehouse:
 
 ```bash
 sbt cozyDistributeCAR
 sbt cozyDistributeSAR
+sbt cozyDistributeSamples
 sbt cozyDistribute
 ```
+
+`cozyDistributeCAR` and `cozyDistributeSAR` write runtime artifacts under `warehouse/repository`. `cozyDistributeSamples` writes user-facing sample ZIP archives under `warehouse/repository/download/<publication.path>` when `publication.path` is configured, and falls back to `warehouse/repository/download/samples/<publication.name>`. `cozyPlanDistributeSamples` is the dry-run path and prints planned archive paths as a tree. `cozyDistribute` remains a single-file compatibility task for CAR/SAR; it intentionally does not dispatch `sample-multi`.
 
 `cozyDistribute*` rejects `SNAPSHOT` versions by default. Use it for release distribution only; keep `cozyPublishCAR/SAR` for development-local publication.
 
