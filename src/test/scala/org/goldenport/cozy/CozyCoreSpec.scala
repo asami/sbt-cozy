@@ -93,6 +93,16 @@ final class CozyProjectConfigSpec extends CozyTestBase {
         "      - textus-tutorial",
         "packaging:",
         "  car:",
+        "    include_dependencies: false",
+        "    dependencies:",
+        "      provided:",
+        "        - org.goldenport:goldenport-cncf_3:0.4.8-SNAPSHOT",
+        "      shared:",
+        "        - org.postgresql:postgresql:42.7.3",
+        "      local:",
+        "        - com.example:legacy-driver:1.2.0",
+        "      repositories:",
+        "        - maven-central",
         "    manifest_metadata:",
         "      component: textus",
         "      bounded_context: default"
@@ -114,6 +124,11 @@ final class CozyProjectConfigSpec extends CozyTestBase {
     assert(config.list("warehouse.repository_artifacts.include") == Seq("car", "sar"))
     assert(config.list("warehouse.repository_artifacts.modules") == Seq("textus-tutorial"))
     assert(config.list("warehouse.download.samples") == Seq("textus-tutorial"))
+    assert(config.boolean("packaging.car.include_dependencies").contains(false))
+    assert(config.list("packaging.car.dependencies.provided") == Seq("org.goldenport:goldenport-cncf_3:0.4.8-SNAPSHOT"))
+    assert(config.list("packaging.car.dependencies.shared") == Seq("org.postgresql:postgresql:42.7.3"))
+    assert(config.list("packaging.car.dependencies.local") == Seq("com.example:legacy-driver:1.2.0"))
+    assert(config.list("packaging.car.dependencies.repositories") == Seq("maven-central"))
     assert(config.mapUnder("packaging.car.manifest_metadata") == Map("component" -> "textus", "bounded_context" -> "default"))
   }
 
@@ -140,6 +155,35 @@ final class CozyProjectConfigSpec extends CozyTestBase {
 
     assert(CozyPlugin.publication_path(config, projectmetadata).contains("textus/tutorial/textus-tutorial"))
     assert(CozyPlugin.publication_path(configwithpath, projectmetadata).contains("textus/tutorial/custom"))
+  }
+
+  test("writes scoped CAR dependency manifest from project-local config") {
+    val config = CozyProjectConfig.parse(
+      Seq(
+        "packaging:",
+        "  car:",
+        "    dependencies:",
+        "      provided:",
+        "        - org.goldenport:goldenport-cncf_3:0.4.8-SNAPSHOT",
+        "      shared:",
+        "        - org.postgresql:postgresql:42.7.3",
+        "      local:",
+        "        - com.example:legacy-driver:1.2.0",
+        "      repositories:",
+        "        - maven-central"
+      )
+    )
+
+    withTempDir() { dir =>
+      val manifest = CozyCarDependencyManifest.write(dir, config).get
+      val text = IO.read(manifest)
+
+      assert(manifest.getName == "component-dependencies.yaml")
+      assert(text.contains("provided:"))
+      assert(text.contains("shared:"))
+      assert(text.contains("local:"))
+      assert(text.contains("\"org.postgresql:postgresql:42.7.3\""))
+    }
   }
 
   test("renders planned sample archives as a compact tree") {

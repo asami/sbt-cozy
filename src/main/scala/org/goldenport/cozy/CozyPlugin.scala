@@ -48,7 +48,7 @@ object CozyProjectConfig {
     var values = Map.empty[String, String]
     var lists = Map.empty[String, Vector[String]]
 
-    def currentPath: String = stack.map(_._2).mkString(".")
+    def _current_path_ = stack.map(_._2).mkString(".")
 
     lines.foreach { raw =>
       val line = if (raw.trim.startsWith("#")) "" else raw
@@ -57,7 +57,7 @@ object CozyProjectConfig {
         val trimmed = line.trim
         if (trimmed.startsWith("- ")) {
           stack = stack.dropRight(stack.reverse.takeWhile(_._1 >= indent).length)
-          val key = currentPath
+          val key = _current_path_
           if (key.nonEmpty)
             lists = lists.updated(key, lists.getOrElse(key, Vector.empty) :+ _unquote(trimmed.substring(2).trim))
         } else {
@@ -110,6 +110,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyPackaging = settingKey[String]("Default packaging target. Either 'car' or 'sar'.")
     val cozyCarSourceDir = settingKey[File]("Directory containing CAR-root files included in cozyBuildCAR")
     val cozyCarName = settingKey[String]("Base file name of the generated CAR archive")
+    val cozyCarIncludeDependencies = settingKey[Boolean]("Whether cozyBuildCAR embeds Compile dependency jars under CAR /lib")
     val cozySarName = settingKey[String]("Base file name of the generated SAR archive")
     val cozySpiJars = settingKey[Seq[File]]("Additional SPI jars to include under CAR /spi")
     val cozySarExtensionJars = settingKey[Seq[File]]("Injected extension jars to include under SAR /extension")
@@ -173,6 +174,7 @@ object CozyPlugin extends AutoPlugin {
     cozyPackaging := cozyProjectConfig.value.value("packaging.kind").getOrElse("car"),
     cozyCarSourceDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("packaging.car.source_dir")).getOrElse((Compile / sourceDirectory).value / "car"),
     cozyCarName := cozyProjectConfig.value.value("packaging.car.name").getOrElse(s"${moduleName.value}-${version.value}"),
+    cozyCarIncludeDependencies := cozyProjectConfig.value.boolean("packaging.car.include_dependencies").getOrElse(false),
     cozySarName := cozyProjectConfig.value.value("packaging.sar.name").getOrElse(s"${moduleName.value}-${version.value}"),
     cozySpiJars := cozyProjectConfig.value.list("packaging.car.spi_jars").map(x => _config_file(baseDirectory.value, Some(x)).getOrElse(file(x))),
     cozySarExtensionJars := cozyProjectConfig.value.list("packaging.sar.extension_jars").map(x => _config_file(baseDirectory.value, Some(x)).getOrElse(file(x))),
@@ -287,14 +289,16 @@ object CozyPlugin extends AutoPlugin {
         .sortBy(_.getName)
       val carSourceDir = cozyCarSourceDir.value
       val defaultConf = carSourceDir / "config" / "default.conf"
+      val dependencymanifest = CozyCarDependencyManifest.write(target.value, cozyProjectConfig.value)
       val packagingMetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value)
       CozySbtBridge.packageCar(
         archive = archive,
         mainJar = mainJar,
-        libJars = libJars,
+        libJars = if (cozyCarIncludeDependencies.value) libJars else Seq.empty,
         spiJars = spiJars,
         carDir = if (carSourceDir.exists()) Some(carSourceDir) else None,
         defaultConf = if (defaultConf.exists()) Some(defaultConf) else None,
+        dependencyManifest = dependencymanifest,
         webDir = {
           val d = baseDirectory.value / "src" / "main" / "web"
           if (d.exists()) Some(d) else None
@@ -1380,6 +1384,47 @@ private[cozy] object CozyDelegatedGenerator {
     path.replace('\\', '/').stripPrefix("/")
 }
 
+private[cozy] object CozyCarDependencyManifest {
+  def write(
+    targetdir: File,
+    config: CozyProjectConfig
+  ): Option[File] = {
+    val provided = config.list("packaging.car.dependencies.provided")
+    val shared = config.list("packaging.car.dependencies.shared")
+    val local = config.list("packaging.car.dependencies.local")
+    val repositories = config.list("packaging.car.dependencies.repositories")
+    if (provided.isEmpty && shared.isEmpty && local.isEmpty && repositories.isEmpty) {
+      None
+    } else {
+      val file = targetdir / "cozy" / "component-dependencies.yaml"
+      IO.createDirectory(file.getParentFile)
+      IO.write(file, _yaml(provided, shared, local, repositories))
+      Some(file)
+    }
+  }
+
+  private def _yaml(
+    provided: Seq[String],
+    shared: Seq[String],
+    local: Seq[String],
+    repositories: Seq[String]
+  ): String = {
+    def section(name: String, values: Seq[String]): String =
+      if (values.isEmpty) ""
+      else values.map(v => s"    - ${_yaml_string(v)}\n").mkString(s"  $name:\n", "", "")
+    "dependencies:\n" +
+      section("provided", provided) +
+      section("shared", shared) +
+      section("local", local) +
+      section("repositories", repositories)
+  }
+
+  private def _yaml_string(value: String): String = {
+    val escaped = value.replace("\\", "\\\\").replace("\"", "\\\"")
+    s""""$escaped""""
+  }
+}
+
 final case class CozyPackageMetadata(
   component: String,
   extensions: Map[String, String],
@@ -1516,6 +1561,7 @@ private[cozy] object CozySbtBridge {
     spiJars: Seq[File],
     carDir: Option[File],
     defaultConf: Option[File],
+    dependencyManifest: Option[File],
     webDir: Option[File],
     assemblyDescriptor: Option[File],
     name: String,
@@ -1543,6 +1589,7 @@ private[cozy] object CozySbtBridge {
             _csv_arg("spi-jars", spiJars.map(_.getAbsolutePath)) ++
             carDir.toVector.map(f => s"--car-dir=${f.getAbsolutePath}") ++
             defaultConf.toVector.map(f => s"--default-conf=${f.getAbsolutePath}") ++
+            dependencyManifest.toVector.map(f => s"--dependency-manifest=${f.getAbsolutePath}") ++
             webDir.toVector.map(f => s"--web-dir=${f.getAbsolutePath}") ++
             assemblyDescriptor.toVector.map(f => s"--assembly-descriptor=${f.getAbsolutePath}") ++
             _map_arg("extensions", extensions) ++
