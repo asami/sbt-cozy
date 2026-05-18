@@ -5,7 +5,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /*
  * @since   Apr. 23, 2026
- * @version May. 16, 2026
+ * @version May. 18, 2026
  * @author  ASAMI, Tomoharu
  */
 final class BridgeContractSpec extends AnyFunSuite {
@@ -49,7 +49,7 @@ final class BridgeContractSpec extends AnyFunSuite {
         "--name=sample-component",
         "--version=0.1.0",
         "--save=/tmp/sample-component.car",
-        "--source-dir=/tmp/src",
+        "--project-dir=/tmp/sample-project",
         "--main-jar=/tmp/component-main.jar"
       )
     )

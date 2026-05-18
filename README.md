@@ -38,7 +38,6 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 ### Packaging
 
 - `cozyPackaging`: default packaging type (`car` or `sar`)
-- `cozyCarSourceDir`: CAR-root source directory (default: `src/main/car`)
 - `cozyCarName`: base file name of the generated CAR archive (default: `${moduleName}-${version}`)
 - `cozySarName`: base file name of the generated SAR archive (default: `${moduleName}-${version}`)
 - `cozySpiJars`: additional JARs included under `spi/` in CAR
@@ -166,7 +165,7 @@ Generate BoK artifact/release metadata from the warehouse:
 sbt cozyIndexWarehouse
 ```
 
-Project-local defaults can be written in `.cozy/config.yaml`. The same values can also be written as sbt settings in `build.sbt`; explicit `build.sbt` settings take precedence over `.cozy/config.yaml`.
+Project-local defaults can be written in `.cozy/config.yaml`. sbt-cozy reads only sbt-adapter settings there, such as generation, publication, distribution, and warehouse settings. CAR packaging policy such as `packaging.car.source_dir`, `packaging.car.include_dependencies`, dependencies, and manifest metadata is interpreted by cozy itself when sbt-cozy calls `cozy package-car --project-dir`.
 
 ```yaml
 generation:

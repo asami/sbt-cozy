@@ -5,7 +5,7 @@
     "--name=sample-component",
     "--version=0.1.0",
     "--save=/tmp/sample-component.car",
-    "--source-dir=/tmp/src",
+    "--project-dir=/tmp/sample-project",
     "--main-jar=/tmp/component-main.jar"
   ],
   "settings": {}
