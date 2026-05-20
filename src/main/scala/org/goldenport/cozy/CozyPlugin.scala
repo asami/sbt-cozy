@@ -16,7 +16,7 @@ import scala.sys.process._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
- * @version May. 18, 2026
+ * @version May. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -112,8 +112,8 @@ object CozyPlugin extends AutoPlugin {
     val cozySpiJars = settingKey[Seq[File]]("Additional SPI jars to include under CAR /spi")
     val cozySarExtensionJars = settingKey[Seq[File]]("Injected extension jars to include under SAR /extension")
     val cozyManifestMetadata = settingKey[Map[String, String]]("Additional metadata fields written to the CAR component descriptor")
-    val cozyLocalRepositoryDir = settingKey[File]("Local destination directory for cozyPublishCAR/cozyPublishSAR")
-    val cozyDistributionDir = settingKey[File]("Release distribution repository directory for cozyDistributeCAR/cozyDistributeSAR")
+    val cozyLocalRepositoryDir = settingKey[File]("Legacy local repository directory; publish tasks use cozyWarehouseDir")
+    val cozyDistributionDir = settingKey[File]("Release distribution repository directory for cozyDistributeCar/cozyDistributeSar")
     val cozyDistributionRequireReleaseVersion = settingKey[Boolean]("Reject distribution tasks for SNAPSHOT versions")
     val cozyWarehouseDir = settingKey[File]("Warehouse directory indexed by cozyIndexWarehouse")
     val cozyWarehouseMavenCoordinates = settingKey[Seq[String]]("Maven coordinates indexed from the warehouse")
@@ -127,12 +127,18 @@ object CozyPlugin extends AutoPlugin {
     val cozyPublicationPath = settingKey[Option[String]]("Optional publication site path from publication.path or project.path")
     val cozyPublicationSamplesDir = settingKey[Option[File]]("Optional sample collection directory for sample-multi publication and distribution")
 
-    val cozyBuildCAR = taskKey[File]("Build CAR archive from compiled outputs")
-    val cozyBuildSAR = taskKey[File]("Build SAR archive from cozy source definitions")
-    val cozyPublishCAR = taskKey[File]("Copy CAR archive to cozy local repository")
-    val cozyPublishSAR = taskKey[File]("Copy SAR archive to cozy local repository")
-    val cozyDistributeCAR = taskKey[File]("Copy CAR archive to the release distribution repository")
-    val cozyDistributeSAR = taskKey[File]("Copy SAR archive to the release distribution repository")
+    val cozyBuildCar = taskKey[File]("Build Car archive from compiled outputs")
+    val cozyBuildSar = taskKey[File]("Build Sar archive from cozy source definitions")
+    val cozyPublishCar = taskKey[File]("Publish Car archive and catalog to the warehouse")
+    val cozyPublishSar = taskKey[File]("Publish Sar archive and catalog to the warehouse")
+    val cozyDistributeCar = taskKey[File]("Copy Car archive to the release distribution repository")
+    val cozyDistributeSar = taskKey[File]("Copy Sar archive to the release distribution repository")
+    val cozyBuildCAR = taskKey[File]("Compatibility alias for cozyBuildCar")
+    val cozyBuildSAR = taskKey[File]("Compatibility alias for cozyBuildSar")
+    val cozyPublishCAR = taskKey[File]("Compatibility alias for cozyPublishCar")
+    val cozyPublishSAR = taskKey[File]("Compatibility alias for cozyPublishSar")
+    val cozyDistributeCAR = taskKey[File]("Compatibility alias for cozyDistributeCar")
+    val cozyDistributeSAR = taskKey[File]("Compatibility alias for cozyDistributeSar")
     val cozyDistributeSamples = taskKey[Seq[File]]("Copy versioned sample ZIP archives to the release distribution warehouse")
     val cozyPlanDistributeSamples = taskKey[Seq[File]]("Print planned sample ZIP archive paths without writing to the warehouse")
     val cozyDistribute = taskKey[File]("Copy the configured CAR or SAR archive to the release distribution repository")
@@ -265,7 +271,7 @@ object CozyPlugin extends AutoPlugin {
       }
     },
 
-    cozyBuildCAR := {
+    cozyBuildCar := {
       val sourcedir = cozySourceDir.value
       val log = streams.value.log
       val archive = target.value / s"${cozyCarName.value}.car"
@@ -304,7 +310,9 @@ object CozyPlugin extends AutoPlugin {
       archive
     },
 
-    cozyBuildSAR := {
+    cozyBuildCAR := cozyBuildCar.value,
+
+    cozyBuildSar := {
       val sourcedir = cozySourceDir.value
       val sarsources = CozyFileLoader.loadSarSources(sourcedir)
       val log = streams.value.log
@@ -335,27 +343,53 @@ object CozyPlugin extends AutoPlugin {
       archive
     },
 
-    cozyPublishCAR := {
-      val archive = cozyBuildCAR.value
-      val destination = cozyLocalRepositoryDir.value / "car" / archive.getName
-      IO.createDirectory(destination.getParentFile)
-      IO.copyFile(archive, destination, preserveLastModified = true)
-      streams.value.log.info(s"[sbt-cozy] published CAR to ${destination.getAbsolutePath}")
+    cozyBuildSAR := cozyBuildSar.value,
+
+    cozyPublishCar := {
+      val archive = cozyBuildCar.value
+      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+      val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", artifactname, version.value)
+      CozySbtBridge.publishCar(
+        projectdir = baseDirectory.value,
+        warehousedir = cozyWarehouseDir.value,
+        name = artifactname,
+        version = version.value,
+        archive = archive,
+        basedir = baseDirectory.value,
+        delegateprojectdir = cozyDelegateProjectDir.value,
+        delegatecommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      streams.value.log.info(s"[sbt-cozy] published Car to ${destination.getAbsolutePath}")
       destination
     },
 
-    cozyPublishSAR := {
-      val archive = cozyBuildSAR.value
-      val destination = cozyLocalRepositoryDir.value / "sar" / archive.getName
-      IO.createDirectory(destination.getParentFile)
-      IO.copyFile(archive, destination, preserveLastModified = true)
-      streams.value.log.info(s"[sbt-cozy] published SAR to ${destination.getAbsolutePath}")
+    cozyPublishCAR := cozyPublishCar.value,
+
+    cozyPublishSar := {
+      val archive = cozyBuildSar.value
+      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+      val destination = _repository_artifact_destination(cozyWarehouseDir.value, "sar", artifactname, version.value)
+      CozySbtBridge.publishSar(
+        projectdir = baseDirectory.value,
+        warehousedir = cozyWarehouseDir.value,
+        name = artifactname,
+        version = version.value,
+        archive = archive,
+        basedir = baseDirectory.value,
+        delegateprojectdir = cozyDelegateProjectDir.value,
+        delegatecommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      streams.value.log.info(s"[sbt-cozy] published Sar to ${destination.getAbsolutePath}")
       destination
     },
 
-    cozyDistributeCAR := {
+    cozyPublishSAR := cozyPublishSar.value,
+
+    cozyDistributeCar := {
       _validate_release_distribution(version.value, cozyDistributionRequireReleaseVersion.value)
-      val archive = cozyBuildCAR.value
+      val archive = cozyBuildCar.value
       val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", version.value, archive)
       IO.createDirectory(destination.getParentFile)
       IO.copyFile(archive, destination, preserveLastModified = true)
@@ -363,15 +397,19 @@ object CozyPlugin extends AutoPlugin {
       destination
     },
 
-    cozyDistributeSAR := {
+    cozyDistributeCAR := cozyDistributeCar.value,
+
+    cozyDistributeSar := {
       _validate_release_distribution(version.value, cozyDistributionRequireReleaseVersion.value)
-      val archive = cozyBuildSAR.value
+      val archive = cozyBuildSar.value
       val destination = _repository_artifact_destination(cozyWarehouseDir.value, "sar", version.value, archive)
       IO.createDirectory(destination.getParentFile)
       IO.copyFile(archive, destination, preserveLastModified = true)
       streams.value.log.info(s"[sbt-cozy] distributed SAR to ${destination.getAbsolutePath}")
       destination
     },
+
+    cozyDistributeSAR := cozyDistributeSar.value,
 
     cozyDistributeSamples := {
       _validate_release_distribution(version.value, cozyDistributionRequireReleaseVersion.value)
@@ -427,8 +465,8 @@ object CozyPlugin extends AutoPlugin {
 
     cozyDistribute := Def.taskDyn[File] {
       cozyPackaging.value.trim.toLowerCase(java.util.Locale.ROOT) match {
-        case "car" => cozyDistributeCAR
-        case "sar" => cozyDistributeSAR
+        case "car" => cozyDistributeCar
+        case "sar" => cozyDistributeSar
         case "sample-multi" => Def.task { sys.error("[sbt-cozy] cozyDistributeSamples must be used for sample-multi because it can produce multiple archives"): File }
         case other => Def.task { sys.error(s"[sbt-cozy] invalid cozyPackaging '${other}'. expected 'car', 'sar', or 'sample-multi'"): File }
       }
@@ -577,8 +615,11 @@ object CozyPlugin extends AutoPlugin {
 
   private def _repository_artifact_destination(root: File, kind: String, version: String, archive: File): File = {
     val module = _repository_artifact_module(archive, kind, version)
-    root / "repository" / kind / module / version / s"$module-$version.$kind"
+    _repository_artifact_destination(root, kind, module, version)
   }
+
+  private def _repository_artifact_destination(root: File, kind: String, module: String, version: String): File =
+    root / "repository" / kind / module / version / s"$module-$version.$kind"
 
   private def _repository_artifact_module(archive: File, kind: String, version: String): String = {
     val suffix = s".$kind"
@@ -1565,6 +1606,66 @@ private[cozy] object CozySbtBridge {
     )
   }
 
+  def publishCar(
+    projectdir: File,
+    warehousedir: File,
+    name: String,
+    version: String,
+    archive: File,
+    basedir: File,
+    delegateprojectdir: Option[File],
+    delegatecommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    _run(
+      _request(
+        action = "publish-car",
+        arguments =
+          Vector(
+            projectdir.getAbsolutePath,
+            s"--warehouse=${warehousedir.getAbsolutePath}",
+            s"--name=$name",
+            s"--version=$version",
+            s"--car=${archive.getAbsolutePath}"
+          )
+      ),
+      basedir,
+      delegateprojectdir,
+      delegatecommand,
+      log
+    )
+  }
+
+  def publishSar(
+    projectdir: File,
+    warehousedir: File,
+    name: String,
+    version: String,
+    archive: File,
+    basedir: File,
+    delegateprojectdir: Option[File],
+    delegatecommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    _run(
+      _request(
+        action = "publish-sar",
+        arguments =
+          Vector(
+            projectdir.getAbsolutePath,
+            s"--warehouse=${warehousedir.getAbsolutePath}",
+            s"--name=$name",
+            s"--version=$version",
+            s"--sar=${archive.getAbsolutePath}"
+          )
+      ),
+      basedir,
+      delegateprojectdir,
+      delegatecommand,
+      log
+    )
+  }
+
   def distributeSamples(
     projectDir: File,
     warehouseDir: File,
@@ -1850,8 +1951,8 @@ private[cozy] object CozyAppScaffold {
 |Common commands:
 |- `sbt compile`
 |- `sbt component/cozyGenerate`
-|- `sbt component/cozyBuildCAR`
-|- `sbt subsystem/cozyBuildSAR`
+|- `sbt component/cozyBuildCar`
+|- `sbt subsystem/cozyBuildSar`
 |
 |Next expected edits:
 |1. model the application under `component/src/main/cozy/`
@@ -1940,8 +2041,10 @@ private[cozy] object CozyAppScaffold {
 |    Test / fork := false
 |  )
 |
-|addCommandAlias("cozyBuildAppCAR", "component/cozyBuildCAR")
-|addCommandAlias("cozyBuildAppSAR", "subsystem/cozyBuildSAR")
+|addCommandAlias("cozyBuildAppCar", "component/cozyBuildCar")
+|addCommandAlias("cozyBuildAppSar", "subsystem/cozyBuildSar")
+|addCommandAlias("cozyBuildAppCAR", "component/cozyBuildCar")
+|addCommandAlias("cozyBuildAppSAR", "subsystem/cozyBuildSar")
 |addCommandAlias("cozyGenerateApp", "component/cozyGenerate")
 |""".stripMargin
   }
@@ -1994,8 +2097,8 @@ private[cozy] object CozyAppScaffold {
 |
 |Typical workflow:
 |- `sbt compile`
-|- `sbt component/cozyBuildCAR`
-|- `sbt subsystem/cozyBuildSAR`
+|- `sbt component/cozyBuildCar`
+|- `sbt subsystem/cozyBuildSar`
 |
 |For ${spec.appName}, external providers such as `textus-user-account` are expected to be bound in `../subsystem-descriptor.yaml` by coordinate, not copied into this project tree.
 |""".stripMargin

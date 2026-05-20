@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "action": "publish-car",
+  "arguments": [
+    "/tmp/sample-project",
+    "--warehouse=/tmp/warehouse",
+    "--name=sample-component",
+    "--version=0.1.0",
+    "--car=/tmp/sample-component.car"
+  ],
+  "settings": {}
+}

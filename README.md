@@ -8,7 +8,7 @@
 - Generate Scala sources via `cozy` through `sbt-bridge v1` by default
 - Build CAR (`.car`) and SAR (`.sar`) archives
 - Use descriptor-first CAR/SAR packaging
-- Publish CAR/SAR artifacts into a local development repository with `cozyPublishCAR` and `cozyPublishSAR`
+- Publish Car/Sar artifacts and catalogs into a warehouse with `cozyPublishCar` and `cozyPublishSar`
 - Distribute release CAR/SAR artifacts and sample ZIP downloads with explicit `cozyDistribute*` tasks
 - Index warehouse artifacts into `publish.d` metadata with `cozyIndexWarehouse`
 
@@ -43,7 +43,7 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 - `cozySpiJars`: additional JARs included under `spi/` in CAR
 - `cozySarExtensionJars`: additional JARs included under `extension/` in SAR
 - `cozyManifestMetadata`: extra metadata passed to `cozy` packaging
-- `cozyLocalRepositoryDir`: destination directory for `cozyPublish*` tasks (default: `target/cozy-repository`)
+- `cozyLocalRepositoryDir`: legacy local repository setting; publish tasks now use `cozyWarehouseDir`
 - `cozyDistributionDir`: release distribution repository directory (default: `target/cozy-distribution`)
 - `cozyDistributionRequireReleaseVersion`: reject `SNAPSHOT` versions during distribution (default: `true`)
 - `cozyWarehouseDir`: warehouse root indexed by `cozyIndexWarehouse` (default: `warehouse.repository`, then `cozyDistributionDir`)
@@ -54,12 +54,13 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 
 Tasks:
 
-- `cozyBuildCAR`: build a CAR archive
-- `cozyBuildSAR`: build a SAR archive
-- `cozyPublishCAR`: copy the CAR built by `cozyBuildCAR` into the development local repository
-- `cozyPublishSAR`: copy the SAR built by `cozyBuildSAR` into the development local repository
-- `cozyDistributeCAR`: copy the CAR built by `cozyBuildCAR` into `warehouse/repository/car`
-- `cozyDistributeSAR`: copy the SAR built by `cozyBuildSAR` into `warehouse/repository/sar`
+- `cozyBuildCar`: build a Car archive
+- `cozyBuildSar`: build a Sar archive
+- `cozyPublishCar`: publish the Car archive and catalog through Cozy into `warehouse/repository`
+- `cozyPublishSar`: publish the Sar archive and catalog through Cozy into `warehouse/repository`
+- `cozyDistributeCar`: copy the Car built by `cozyBuildCar` into `warehouse/repository/car`
+- `cozyDistributeSar`: copy the Sar built by `cozyBuildSar` into `warehouse/repository/sar`
+- uppercase `CAR` / `SAR` task names remain compatibility aliases
 - `cozyDistributeSamples`: copy collection and child sample ZIP archives into `warehouse/repository/download/<publication.path>`; fallback is `warehouse/repository/download/samples/<publication.name>`
 - `cozyPlanDistributeSamples`: print planned sample ZIP archive paths as a tree without writing archives; SNAPSHOT versions are allowed
 - `cozyDistribute`: distribute CAR or SAR based on `cozyPackaging`; use `cozyDistributeSamples` for `sample-multi`
@@ -129,29 +130,29 @@ sbt cozyGenerate
 Build archives:
 
 ```bash
-sbt cozyBuildCAR
-sbt cozyBuildSAR
+sbt cozyBuildCar
+sbt cozyBuildSar
 ```
 
-Publish CAR/SAR into the local cozy repository:
+Publish Car/Sar and catalogs into the configured warehouse:
 
 ```bash
-sbt cozyPublishCAR
-sbt cozyPublishSAR
+sbt cozyPublishCar
+sbt cozyPublishSar
 ```
 
 Distribute release archives into the configured warehouse:
 
 ```bash
-sbt cozyDistributeCAR
-sbt cozyDistributeSAR
+sbt cozyDistributeCar
+sbt cozyDistributeSar
 sbt cozyDistributeSamples
 sbt cozyDistribute
 ```
 
-`cozyDistributeCAR` and `cozyDistributeSAR` write runtime artifacts under `warehouse/repository`. `cozyDistributeSamples` writes user-facing sample ZIP archives under `warehouse/repository/download/<publication.path>` when `publication.path` is configured, and falls back to `warehouse/repository/download/samples/<publication.name>`. `cozyPlanDistributeSamples` is the dry-run path and prints planned archive paths as a tree. `cozyDistribute` remains a single-file compatibility task for CAR/SAR; it intentionally does not dispatch `sample-multi`.
+`cozyDistributeCar` and `cozyDistributeSar` write runtime artifacts under `warehouse/repository`. `cozyDistributeSamples` writes user-facing sample ZIP archives under `warehouse/repository/download/<publication.path>` when `publication.path` is configured, and falls back to `warehouse/repository/download/samples/<publication.name>`. `cozyPlanDistributeSamples` is the dry-run path and prints planned archive paths as a tree. `cozyDistribute` remains a single-file compatibility task for Car/Sar; it intentionally does not dispatch `sample-multi`.
 
-`cozyDistribute*` rejects `SNAPSHOT` versions by default. Use it for release distribution only; keep `cozyPublishCAR/SAR` for development-local publication.
+`cozyDistribute*` rejects `SNAPSHOT` versions by default. `cozyPublishCar/Sar` is the Cozy-owned artifact + catalog publication path and does not generate `maven-metadata.xml` yet.
 
 Generate BoK publication sources from the sbt project:
 
@@ -165,7 +166,7 @@ Generate BoK artifact/release metadata from the warehouse:
 sbt cozyIndexWarehouse
 ```
 
-Project-local defaults can be written in `.cozy/config.yaml`. sbt-cozy reads only sbt-adapter settings there, such as generation, publication, distribution, and warehouse settings. CAR packaging policy such as `packaging.car.source_dir`, `packaging.car.include_dependencies`, dependencies, and manifest metadata is interpreted by cozy itself when sbt-cozy calls `cozy package-car --project-dir`.
+Project-local defaults can be written in `.cozy/config.yaml`. sbt-cozy reads only sbt-adapter settings there, such as generation, publication, distribution, and warehouse settings. CAR packaging and publish policy such as `packaging.car.source_dir`, `packaging.car.include_dependencies`, dependencies, manifest metadata, and catalog updates are interpreted by cozy itself when sbt-cozy calls `cozy package-car --project-dir` and `cozy publish-car`.
 
 ```yaml
 generation:

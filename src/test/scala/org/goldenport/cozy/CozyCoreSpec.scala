@@ -13,7 +13,7 @@ import sbt._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
- * @version May. 18, 2026
+ * @version May. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -479,6 +479,54 @@ final class CozyPackagingSpec extends CozyTestBase {
           s"--save=${archive.getAbsolutePath}",
           s"--source-dir=${(dir / "src").getAbsolutePath}",
           "--source-files=subsystem-descriptor.yaml"
+        )
+      )
+      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
+      assert(resolved.head == "cozy")
+      assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
+      assert(resolved.last.startsWith("--request="))
+    }
+  }
+
+  test("publishCar delegates warehouse publication to cozy bridge") {
+    withTempDir("sbt-cozy-publish-car-delegate") { dir =>
+      val archive = write(dir / "target" / "sample-component.car", "car")
+      val warehouse = dir / "warehouse"
+      val (cwd, resolved) = CozySbtBridge.resolveForTest(
+        basedir = dir,
+        delegateprojectdir = None,
+        delegatecommand = Seq("cozy"),
+        action = "publish-car",
+        arguments = Vector(
+          dir.getAbsolutePath,
+          s"--warehouse=${warehouse.getAbsolutePath}",
+          "--name=sample-component",
+          "--version=0.1.0",
+          s"--car=${archive.getAbsolutePath}"
+        )
+      )
+      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
+      assert(resolved.head == "cozy")
+      assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
+      assert(resolved.last.startsWith("--request="))
+    }
+  }
+
+  test("publishSar delegates warehouse publication to cozy bridge") {
+    withTempDir("sbt-cozy-publish-sar-delegate") { dir =>
+      val archive = write(dir / "target" / "sample-subsystem.sar", "sar")
+      val warehouse = dir / "warehouse"
+      val (cwd, resolved) = CozySbtBridge.resolveForTest(
+        basedir = dir,
+        delegateprojectdir = None,
+        delegatecommand = Seq("cozy"),
+        action = "publish-sar",
+        arguments = Vector(
+          dir.getAbsolutePath,
+          s"--warehouse=${warehouse.getAbsolutePath}",
+          "--name=sample-subsystem",
+          "--version=0.1.0",
+          s"--sar=${archive.getAbsolutePath}"
         )
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)

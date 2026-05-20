@@ -6,6 +6,8 @@
     "generate",
     "package-car",
     "package-sar",
+    "publish-car",
+    "publish-sar",
     "publish-project",
     "distribute-samples",
     "index-warehouse"

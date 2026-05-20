@@ -5,7 +5,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /*
  * @since   Apr. 23, 2026
- * @version May. 18, 2026
+ * @version May. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 final class BridgeContractSpec extends AnyFunSuite {
@@ -23,6 +23,8 @@ final class BridgeContractSpec extends AnyFunSuite {
       "request-generate.json",
       "request-package-car.json",
       "request-package-sar.json",
+      "request-publish-car.json",
+      "request-publish-sar.json",
       "request-publish-project.json",
       "request-distribute-samples.json",
       "request-index-warehouse.json",
@@ -69,6 +71,36 @@ final class BridgeContractSpec extends AnyFunSuite {
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-package-sar.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
+  }
+
+  test("generated bridge request JSON matches canonical publish-car fixture") {
+    val json = CozySbtBridge.renderRequestJsonForTest(
+      action = "publish-car",
+      arguments = Vector(
+        "/tmp/sample-project",
+        "--warehouse=/tmp/warehouse",
+        "--name=sample-component",
+        "--version=0.1.0",
+        "--car=/tmp/sample-component.car"
+      )
+    )
+    val expected = Files.readString(_fixture_dir.resolve("request-publish-car.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
+  }
+
+  test("generated bridge request JSON matches canonical publish-sar fixture") {
+    val json = CozySbtBridge.renderRequestJsonForTest(
+      action = "publish-sar",
+      arguments = Vector(
+        "/tmp/sample-project",
+        "--warehouse=/tmp/warehouse",
+        "--name=sample-subsystem",
+        "--version=0.1.0",
+        "--sar=/tmp/sample-subsystem.sar"
+      )
+    )
+    val expected = Files.readString(_fixture_dir.resolve("request-publish-sar.json"))
     assert(_normalize_json(json) == _normalize_json(expected))
   }
 
