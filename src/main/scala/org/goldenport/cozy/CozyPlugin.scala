@@ -16,7 +16,7 @@ import scala.sys.process._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
- * @version May. 20, 2026
+ * @version May. 22, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -116,6 +116,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyDistributionDir = settingKey[File]("Release distribution repository directory for cozyDistributeCar/cozyDistributeSar")
     val cozyDistributionRequireReleaseVersion = settingKey[Boolean]("Reject distribution tasks for SNAPSHOT versions")
     val cozyWarehouseDir = settingKey[File]("Warehouse directory indexed by cozyIndexWarehouse")
+    val cozyLocalWarehouseDir = settingKey[File]("Local CNCF warehouse root used by cozyPublishLocalCar/cozyPublishLocalSar")
     val cozyWarehouseMavenCoordinates = settingKey[Seq[String]]("Maven coordinates indexed from the warehouse")
     val cozyWarehouseRepositoryArtifacts = settingKey[Seq[String]]("Repository artifact types indexed from the warehouse, such as car or sar")
     val cozyWarehouseRepositoryModules = settingKey[Seq[String]]("Repository artifact module names indexed from the warehouse")
@@ -131,6 +132,8 @@ object CozyPlugin extends AutoPlugin {
     val cozyBuildSar = taskKey[File]("Build Sar archive from cozy source definitions")
     val cozyPublishCar = taskKey[File]("Publish Car archive and catalog to the warehouse")
     val cozyPublishSar = taskKey[File]("Publish Sar archive and catalog to the warehouse")
+    val cozyPublishLocalCar = taskKey[File]("Publish Car archive and catalog to the local CNCF repository")
+    val cozyPublishLocalSar = taskKey[File]("Publish Sar archive and catalog to the local CNCF repository")
     val cozyDistributeCar = taskKey[File]("Copy Car archive to the release distribution repository")
     val cozyDistributeSar = taskKey[File]("Copy Sar archive to the release distribution repository")
     val cozyBuildCAR = taskKey[File]("Compatibility alias for cozyBuildCar")
@@ -184,6 +187,7 @@ object CozyPlugin extends AutoPlugin {
     cozyDistributionDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("distribution.repository")).orElse(_config_file(baseDirectory.value, cozyProjectConfig.value.value("warehouse.repository"))).getOrElse(target.value / "cozy-distribution"),
     cozyDistributionRequireReleaseVersion := cozyProjectConfig.value.boolean("distribution.require_release_version").getOrElse(true),
     cozyWarehouseDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("warehouse.repository")).getOrElse(cozyDistributionDir.value),
+    cozyLocalWarehouseDir := local_repository_dir(baseDirectory.value, cozyProjectConfig.value, file(sys.props.getOrElse("user.home", "."))),
     cozyWarehouseMavenCoordinates := {
       val configured = cozyProjectConfig.value.list("warehouse.maven.coordinates")
       if (configured.nonEmpty) configured
@@ -387,6 +391,46 @@ object CozyPlugin extends AutoPlugin {
 
     cozyPublishSAR := cozyPublishSar.value,
 
+    cozyPublishLocalCar := {
+      val archive = cozyBuildCar.value
+      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+      val localwarehouse = cozyLocalWarehouseDir.value
+      val destination = _repository_artifact_destination(localwarehouse, "car", artifactname, version.value)
+      CozySbtBridge.publishCar(
+        projectdir = baseDirectory.value,
+        warehousedir = localwarehouse,
+        name = artifactname,
+        version = version.value,
+        archive = archive,
+        basedir = baseDirectory.value,
+        delegateprojectdir = cozyDelegateProjectDir.value,
+        delegatecommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      streams.value.log.info(s"[sbt-cozy] published local Car to ${destination.getAbsolutePath}")
+      destination
+    },
+
+    cozyPublishLocalSar := {
+      val archive = cozyBuildSar.value
+      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+      val localwarehouse = cozyLocalWarehouseDir.value
+      val destination = _repository_artifact_destination(localwarehouse, "sar", artifactname, version.value)
+      CozySbtBridge.publishSar(
+        projectdir = baseDirectory.value,
+        warehousedir = localwarehouse,
+        name = artifactname,
+        version = version.value,
+        archive = archive,
+        basedir = baseDirectory.value,
+        delegateprojectdir = cozyDelegateProjectDir.value,
+        delegatecommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      streams.value.log.info(s"[sbt-cozy] published local Sar to ${destination.getAbsolutePath}")
+      destination
+    },
+
     cozyDistributeCar := {
       _validate_release_distribution(version.value, cozyDistributionRequireReleaseVersion.value)
       val archive = cozyBuildCar.value
@@ -560,6 +604,11 @@ object CozyPlugin extends AutoPlugin {
   private[cozy] def publication_path(config: CozyProjectConfig, projectmetadata: CozyProjectConfig): Option[String] =
     config.value("publication.path").orElse(projectmetadata.value("project.path"))
 
+  private[cozy] def local_repository_dir(base: File, config: CozyProjectConfig, home: File): File =
+    _config_file(base, config.value("local.repository")).
+      orElse(_config_file(base, config.value("cncf.local.repository"))).
+      getOrElse(home / ".cncf" / "repository")
+
   private def _sample_download_root(warehousedir: File, publicationname: String, publicationpath: Option[String]): File =
     warehousedir / "repository" / "download" / publicationpath.getOrElse(s"samples/${publicationname}")
 
@@ -645,8 +694,14 @@ object CozyPlugin extends AutoPlugin {
 
   private def _config_file(base: File, value: Option[String]): Option[File] =
     value.map { x =>
-      val f = file(x)
-      if (f.isAbsolute) f else base / x
+      val f =
+        if (x == "~")
+          file(sys.props.getOrElse("user.home", ".")).getAbsoluteFile
+        else if (x.startsWith("~/"))
+          file(sys.props.getOrElse("user.home", ".")).getAbsoluteFile / x.drop(2)
+        else
+          file(x)
+      if (f.isAbsolute) f else base / f.getPath
     }
 
   private def _dependency_version(deps: Seq[ModuleID], org: String, modulebasename: String): Option[String] =

@@ -13,7 +13,7 @@ import sbt._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
- * @version May. 20, 2026
+ * @version May. 22, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -149,6 +149,29 @@ final class CozyProjectConfigSpec extends CozyTestBase {
 
     assert(CozyPlugin.publication_path(config, projectmetadata).contains("textus/tutorial/textus-tutorial"))
     assert(CozyPlugin.publication_path(configwithpath, projectmetadata).contains("textus/tutorial/custom"))
+  }
+
+  test("resolves local CNCF repository root from config or home default") {
+    withTempDir("sbt-cozy-local-repository") { dir =>
+      val home = dir / "home"
+      val config = CozyProjectConfig.parse(
+        Seq(
+          "local:",
+          "  repository: target/local-cncf-repository"
+        )
+      )
+      val cncfconfig = CozyProjectConfig.parse(
+        Seq(
+          "cncf:",
+          "  local:",
+          "    repository: target/cncf-repository"
+        )
+      )
+
+      assert(CozyPlugin.local_repository_dir(dir, config, home) == dir / "target" / "local-cncf-repository")
+      assert(CozyPlugin.local_repository_dir(dir, cncfconfig, home) == dir / "target" / "cncf-repository")
+      assert(CozyPlugin.local_repository_dir(dir, CozyProjectConfig.empty, home) == home / ".cncf" / "repository")
+    }
   }
 
   test("renders planned sample archives as a compact tree") {

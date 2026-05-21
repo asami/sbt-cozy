@@ -9,6 +9,7 @@
 - Build CAR (`.car`) and SAR (`.sar`) archives
 - Use descriptor-first CAR/SAR packaging
 - Publish Car/Sar artifacts and catalogs into a warehouse with `cozyPublishCar` and `cozyPublishSar`
+- Publish dependency components into the local CNCF repository with `cozyPublishLocalCar` and `cozyPublishLocalSar`
 - Distribute release CAR/SAR artifacts and sample ZIP downloads with explicit `cozyDistribute*` tasks
 - Index warehouse artifacts into `publish.d` metadata with `cozyIndexWarehouse`
 
@@ -47,6 +48,7 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 - `cozyDistributionDir`: release distribution repository directory (default: `target/cozy-distribution`)
 - `cozyDistributionRequireReleaseVersion`: reject `SNAPSHOT` versions during distribution (default: `true`)
 - `cozyWarehouseDir`: warehouse root indexed by `cozyIndexWarehouse` (default: `warehouse.repository`, then `cozyDistributionDir`)
+- `cozyLocalWarehouseDir`: local CNCF warehouse root for `cozyPublishLocalCar/Sar` (default: `~/.cncf/repository`; `.cozy/config.yaml` `local.repository` or `cncf.local.repository` overrides it)
 - `cozyWarehouseMavenCoordinates`: Maven coordinates indexed from `warehouse/maven`
 - `cozyWarehouseRepositoryArtifacts`: repository artifact types indexed from warehouse, such as `car` and `sar`
 - `cozyWarehouseRepositoryModules`: repository artifact module names indexed from warehouse
@@ -58,6 +60,8 @@ Tasks:
 - `cozyBuildSar`: build a Sar archive
 - `cozyPublishCar`: publish the Car archive and catalog through Cozy into `warehouse/repository`
 - `cozyPublishSar`: publish the Sar archive and catalog through Cozy into `warehouse/repository`
+- `cozyPublishLocalCar`: publish the Car archive and catalog through Cozy into `~/.cncf/repository/repository/car`
+- `cozyPublishLocalSar`: publish the Sar archive and catalog through Cozy into `~/.cncf/repository/repository/sar`
 - `cozyDistributeCar`: copy the Car built by `cozyBuildCar` into `warehouse/repository/car`
 - `cozyDistributeSar`: copy the Sar built by `cozyBuildSar` into `warehouse/repository/sar`
 - uppercase `CAR` / `SAR` task names remain compatibility aliases
@@ -141,6 +145,27 @@ sbt cozyPublishCar
 sbt cozyPublishSar
 ```
 
+Publish development dependency components into the local CNCF repository:
+
+```bash
+sbt cozyPublishLocalCar
+sbt cozyPublishLocalSar
+```
+
+These tasks call Cozy `publish-car` / `publish-sar` with `~/.cncf/repository`
+as the warehouse root. The generated local layout is:
+
+```text
+~/.cncf/repository/repository/car/<artifact>/<version>/<artifact>-<version>.car
+~/.cncf/repository/repository/sar/<artifact>/<version>/<artifact>-<version>.sar
+~/.cncf/repository/repository/catalog/car/<artifact>.yaml
+~/.cncf/repository/repository/catalog/sar/<artifact>.yaml
+```
+
+`~/.cncf/repository` is local publish state consumed by the `cncf` and
+`textus` launchers. `~/.cncf/cache` is remote artifact cache and is not written
+by local publish tasks.
+
 Distribute release archives into the configured warehouse:
 
 ```bash
@@ -152,7 +177,7 @@ sbt cozyDistribute
 
 `cozyDistributeCar` and `cozyDistributeSar` write runtime artifacts under `warehouse/repository`. `cozyDistributeSamples` writes user-facing sample ZIP archives under `warehouse/repository/download/<publication.path>` when `publication.path` is configured, and falls back to `warehouse/repository/download/samples/<publication.name>`. `cozyPlanDistributeSamples` is the dry-run path and prints planned archive paths as a tree. `cozyDistribute` remains a single-file compatibility task for Car/Sar; it intentionally does not dispatch `sample-multi`.
 
-`cozyDistribute*` rejects `SNAPSHOT` versions by default. `cozyPublishCar/Sar` is the Cozy-owned artifact + catalog publication path and does not generate `maven-metadata.xml` yet.
+`cozyDistribute*` rejects `SNAPSHOT` versions by default. `cozyPublishCar/Sar` is the Cozy-owned artifact, catalog, and derived `maven-metadata.xml` publication path.
 
 Generate BoK publication sources from the sbt project:
 
@@ -205,6 +230,17 @@ warehouse:
     modules:
       - textus-tutorial
 ```
+
+Optional local CNCF repository override:
+
+```yaml
+local:
+  repository: /path/to/local-cncf-repository
+```
+
+`.cozy/config.yaml` controls generation and publish operation defaults.
+`.cncf/config.yaml` controls runtime lookup and development startup.
+`project.yaml` describes artifact metadata and runtime compatibility.
 
 Example settings:
 
