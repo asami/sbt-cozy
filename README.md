@@ -48,7 +48,7 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 - `cozyDistributionDir`: release distribution repository directory (default: `target/cozy-distribution`)
 - `cozyDistributionRequireReleaseVersion`: reject `SNAPSHOT` versions during distribution (default: `true`)
 - `cozyWarehouseDir`: warehouse root indexed by `cozyIndexWarehouse` (default: `warehouse.repository`, then `cozyDistributionDir`)
-- `cozyLocalWarehouseDir`: local CNCF warehouse root for `cozyPublishLocalCar/Sar` (default: `~/.cncf/repository`; `.cozy/config.yaml` `local.repository` or `cncf.local.repository` overrides it)
+- `cozyLocalWarehouseDir`: local CNCF warehouse root for `cozyPublishLocalCar/Sar` (default: `~/.cncf/local`; `.cozy/config.yaml` `local.repository` or `cncf.local.repository` overrides it)
 - `cozyWarehouseMavenCoordinates`: Maven coordinates indexed from `warehouse/maven`
 - `cozyWarehouseRepositoryArtifacts`: repository artifact types indexed from warehouse, such as `car` and `sar`
 - `cozyWarehouseRepositoryModules`: repository artifact module names indexed from warehouse
@@ -60,8 +60,8 @@ Tasks:
 - `cozyBuildSar`: build a Sar archive
 - `cozyPublishCar`: publish the Car archive and catalog through Cozy into `warehouse/repository`
 - `cozyPublishSar`: publish the Sar archive and catalog through Cozy into `warehouse/repository`
-- `cozyPublishLocalCar`: publish the Car archive and catalog through Cozy into `~/.cncf/repository/repository/car`
-- `cozyPublishLocalSar`: publish the Sar archive and catalog through Cozy into `~/.cncf/repository/repository/sar`
+- `cozyPublishLocalCar`: publish the Car archive and catalog through Cozy into `~/.cncf/local/repository/car`
+- `cozyPublishLocalSar`: publish the Sar archive and catalog through Cozy into `~/.cncf/local/repository/sar`
 - `cozyDistributeCar`: copy the Car built by `cozyBuildCar` into `warehouse/repository/car`
 - `cozyDistributeSar`: copy the Sar built by `cozyBuildSar` into `warehouse/repository/sar`
 - uppercase `CAR` / `SAR` task names remain compatibility aliases
@@ -152,19 +152,19 @@ sbt cozyPublishLocalCar
 sbt cozyPublishLocalSar
 ```
 
-These tasks call Cozy `publish-car` / `publish-sar` with `~/.cncf/repository`
+These tasks call Cozy `publish-car` / `publish-sar` with `~/.cncf/local`
 as the warehouse root. The generated local layout is:
 
 ```text
-~/.cncf/repository/repository/car/<artifact>/<version>/<artifact>-<version>.car
-~/.cncf/repository/repository/sar/<artifact>/<version>/<artifact>-<version>.sar
-~/.cncf/repository/repository/catalog/car/<artifact>.yaml
-~/.cncf/repository/repository/catalog/sar/<artifact>.yaml
+~/.cncf/local/repository/car/<artifact>/<version>/<artifact>-<version>.car
+~/.cncf/local/repository/sar/<artifact>/<version>/<artifact>-<version>.sar
+~/.cncf/local/repository/catalog/car/<artifact>.yaml
+~/.cncf/local/repository/catalog/sar/<artifact>.yaml
 ```
 
-`~/.cncf/repository` is local publish state consumed by the `cncf` and
-`textus` launchers. `~/.cncf/cache` is remote artifact cache and is not written
-by local publish tasks.
+`~/.cncf/local` is developer-owned local publish state consumed by the `cncf`
+and `textus` launchers. `~/.cncf/cache` is runtime-managed remote artifact
+cache and is not written by local publish tasks.
 
 Distribute release archives into the configured warehouse:
 

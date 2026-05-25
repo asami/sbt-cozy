@@ -13,7 +13,7 @@ import sbt._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
- * @version May. 22, 2026
+ * @version May. 25, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -170,7 +170,7 @@ final class CozyProjectConfigSpec extends CozyTestBase {
 
       assert(CozyPlugin.local_repository_dir(dir, config, home) == dir / "target" / "local-cncf-repository")
       assert(CozyPlugin.local_repository_dir(dir, cncfconfig, home) == dir / "target" / "cncf-repository")
-      assert(CozyPlugin.local_repository_dir(dir, CozyProjectConfig.empty, home) == home / ".cncf" / "repository")
+      assert(CozyPlugin.local_repository_dir(dir, CozyProjectConfig.empty, home) == home / ".cncf" / "local")
     }
   }
 

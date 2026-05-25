@@ -16,7 +16,7 @@ import scala.sys.process._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
- * @version May. 22, 2026
+ * @version May. 25, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -607,7 +607,7 @@ object CozyPlugin extends AutoPlugin {
   private[cozy] def local_repository_dir(base: File, config: CozyProjectConfig, home: File): File =
     _config_file(base, config.value("local.repository")).
       orElse(_config_file(base, config.value("cncf.local.repository"))).
-      getOrElse(home / ".cncf" / "repository")
+      getOrElse(home / ".cncf" / "local")
 
   private def _sample_download_root(warehousedir: File, publicationname: String, publicationpath: Option[String]): File =
     warehousedir / "repository" / "download" / publicationpath.getOrElse(s"samples/${publicationname}")
