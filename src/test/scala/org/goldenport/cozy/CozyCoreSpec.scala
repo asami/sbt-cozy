@@ -13,7 +13,7 @@ import sbt._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
- * @version May. 25, 2026
+ * @version May. 26, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -33,6 +33,36 @@ abstract class CozyTestBase extends AnyFunSuite {
     val zip = new ZipFile(path)
     try zip.entries().asScala.map(_.getName).toSet
     finally zip.close()
+  }
+}
+
+final class CozyPublishVersionPolicySpec extends CozyTestBase {
+  test("release publish tasks accept release versions") {
+    CozyPlugin.validatePublishVersion("0.1.2", "cozyPublishCar", expectsnapshot = false)
+    CozyPlugin.validatePublishVersion("0.1.2", "cozyPublishSar", expectsnapshot = false)
+  }
+
+  test("release publish tasks reject snapshot versions") {
+    val error = intercept[RuntimeException] {
+      CozyPlugin.validatePublishVersion("0.1.3-SNAPSHOT", "cozyPublishCar", expectsnapshot = false)
+    }
+
+    assert(error.getMessage.contains("cozyPublishCar rejects SNAPSHOT version"))
+    assert(error.getMessage.contains("cozyPublishLocalCar"))
+  }
+
+  test("local publish tasks accept snapshot versions") {
+    CozyPlugin.validatePublishVersion("0.1.3-SNAPSHOT", "cozyPublishLocalCar", expectsnapshot = true)
+    CozyPlugin.validatePublishVersion("0.1.3-SNAPSHOT", "cozyPublishLocalSar", expectsnapshot = true)
+  }
+
+  test("local publish tasks reject release versions") {
+    val error = intercept[RuntimeException] {
+      CozyPlugin.validatePublishVersion("0.1.2", "cozyPublishLocalCar", expectsnapshot = true)
+    }
+
+    assert(error.getMessage.contains("cozyPublishLocalCar requires a SNAPSHOT version"))
+    assert(error.getMessage.contains("cozyPublishCar"))
   }
 }
 
@@ -147,8 +177,8 @@ final class CozyProjectConfigSpec extends CozyTestBase {
       )
     )
 
-    assert(CozyPlugin.publication_path(config, projectmetadata).contains("textus/tutorial/textus-tutorial"))
-    assert(CozyPlugin.publication_path(configwithpath, projectmetadata).contains("textus/tutorial/custom"))
+    assert(CozyPlugin.publicationPath(config, projectmetadata).contains("textus/tutorial/textus-tutorial"))
+    assert(CozyPlugin.publicationPath(configwithpath, projectmetadata).contains("textus/tutorial/custom"))
   }
 
   test("resolves local CNCF repository root from config or home default") {
@@ -168,9 +198,9 @@ final class CozyProjectConfigSpec extends CozyTestBase {
         )
       )
 
-      assert(CozyPlugin.local_repository_dir(dir, config, home) == dir / "target" / "local-cncf-repository")
-      assert(CozyPlugin.local_repository_dir(dir, cncfconfig, home) == dir / "target" / "cncf-repository")
-      assert(CozyPlugin.local_repository_dir(dir, CozyProjectConfig.empty, home) == home / ".cncf" / "local")
+      assert(CozyPlugin.localRepositoryDir(dir, config, home) == dir / "target" / "local-cncf-repository")
+      assert(CozyPlugin.localRepositoryDir(dir, cncfconfig, home) == dir / "target" / "cncf-repository")
+      assert(CozyPlugin.localRepositoryDir(dir, CozyProjectConfig.empty, home) == home / ".cncf" / "local")
     }
   }
 
@@ -182,7 +212,7 @@ final class CozyProjectConfigSpec extends CozyTestBase {
         root / "0.1.0" / "01-minimal" / "01-minimal-0.1.0.zip"
       )
 
-      assert(CozyPlugin.sample_archive_tree_lines(warehouse, root, files) == Seq(
+      assert(CozyPlugin.sampleArchiveTreeLines(warehouse, root, files) == Seq(
         "repository/download/textus/tutorial/textus-tutorial",
         "+-- 0.1.0",
         "    |-- 01-minimal",

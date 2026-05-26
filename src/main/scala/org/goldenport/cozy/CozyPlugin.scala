@@ -16,7 +16,7 @@ import scala.sys.process._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
- * @version May. 25, 2026
+ * @version May. 26, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -183,11 +183,11 @@ object CozyPlugin extends AutoPlugin {
     cozySpiJars := Seq.empty,
     cozySarExtensionJars := Seq.empty,
     cozyManifestMetadata := Map.empty,
-    cozyLocalRepositoryDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("packaging.local_repository_dir")).getOrElse(target.value / "cozy-repository"),
+    cozyLocalRepositoryDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("packaging.localRepositoryDir")).getOrElse(target.value / "cozy-repository"),
     cozyDistributionDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("distribution.repository")).orElse(_config_file(baseDirectory.value, cozyProjectConfig.value.value("warehouse.repository"))).getOrElse(target.value / "cozy-distribution"),
     cozyDistributionRequireReleaseVersion := cozyProjectConfig.value.boolean("distribution.require_release_version").getOrElse(true),
     cozyWarehouseDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("warehouse.repository")).getOrElse(cozyDistributionDir.value),
-    cozyLocalWarehouseDir := local_repository_dir(baseDirectory.value, cozyProjectConfig.value, file(sys.props.getOrElse("user.home", "."))),
+    cozyLocalWarehouseDir := localRepositoryDir(baseDirectory.value, cozyProjectConfig.value, file(sys.props.getOrElse("user.home", "."))),
     cozyWarehouseMavenCoordinates := {
       val configured = cozyProjectConfig.value.list("warehouse.maven.coordinates")
       if (configured.nonEmpty) configured
@@ -206,7 +206,7 @@ object CozyPlugin extends AutoPlugin {
     cozyPublicationKind := cozyProjectConfig.value.value("publication.kind"),
     cozyPublicationName := cozyProjectConfig.value.value("publication.name"),
     cozyPublicationTitle := cozyProjectConfig.value.value("publication.title"),
-    cozyPublicationPath := publication_path(cozyProjectConfig.value, cozyProjectMetadata.value),
+    cozyPublicationPath := publicationPath(cozyProjectConfig.value, cozyProjectMetadata.value),
     cozyPublicationSamplesDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("publication.samples_dir")),
     cozyAppName := cozyProjectConfig.value.value("scaffold.app_name").getOrElse(moduleName.value),
     cozyAppRootDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("scaffold.app_root_dir")).getOrElse(baseDirectory.value / cozyAppName.value),
@@ -350,6 +350,7 @@ object CozyPlugin extends AutoPlugin {
     cozyBuildSAR := cozyBuildSar.value,
 
     cozyPublishCar := {
+      validatePublishVersion(version.value, "cozyPublishCar", expectsnapshot = false)
       val archive = cozyBuildCar.value
       val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
       val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", artifactname, version.value)
@@ -371,6 +372,7 @@ object CozyPlugin extends AutoPlugin {
     cozyPublishCAR := cozyPublishCar.value,
 
     cozyPublishSar := {
+      validatePublishVersion(version.value, "cozyPublishSar", expectsnapshot = false)
       val archive = cozyBuildSar.value
       val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
       val destination = _repository_artifact_destination(cozyWarehouseDir.value, "sar", artifactname, version.value)
@@ -392,6 +394,7 @@ object CozyPlugin extends AutoPlugin {
     cozyPublishSAR := cozyPublishSar.value,
 
     cozyPublishLocalCar := {
+      validatePublishVersion(version.value, "cozyPublishLocalCar", expectsnapshot = true)
       val archive = cozyBuildCar.value
       val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
       val localwarehouse = cozyLocalWarehouseDir.value
@@ -412,6 +415,7 @@ object CozyPlugin extends AutoPlugin {
     },
 
     cozyPublishLocalSar := {
+      validatePublishVersion(version.value, "cozyPublishLocalSar", expectsnapshot = true)
       val archive = cozyBuildSar.value
       val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
       val localwarehouse = cozyLocalWarehouseDir.value
@@ -500,7 +504,7 @@ object CozyPlugin extends AutoPlugin {
       val warehousedir = cozyWarehouseDir.value
       val log = streams.value.log
       log.info("[sbt-cozy] planned sample archive tree:")
-      sample_archive_tree_lines(warehousedir, root, planned).foreach { line =>
+      sampleArchiveTreeLines(warehousedir, root, planned).foreach { line =>
         log.info(s"[sbt-cozy] ${line}")
       }
       log.info(s"[sbt-cozy] planned ${planned.size} sample archive path(s)")
@@ -601,10 +605,21 @@ object CozyPlugin extends AutoPlugin {
     if (requirereleaseversion && version.toUpperCase(java.util.Locale.ROOT).contains("SNAPSHOT"))
       sys.error(s"[sbt-cozy] release distribution rejects SNAPSHOT version: ${version}")
 
-  private[cozy] def publication_path(config: CozyProjectConfig, projectmetadata: CozyProjectConfig): Option[String] =
+  private[cozy] def validatePublishVersion(version: String, taskname: String, expectsnapshot: Boolean): Unit = {
+    val issnapshot = isSnapshotVersion(version)
+    if (expectsnapshot && !issnapshot)
+      sys.error(s"[sbt-cozy] ${taskname} requires a SNAPSHOT version; release version '${version}' must use cozyPublishCar/cozyPublishSar")
+    else if (!expectsnapshot && issnapshot)
+      sys.error(s"[sbt-cozy] ${taskname} rejects SNAPSHOT version '${version}'; use cozyPublishLocalCar/cozyPublishLocalSar during SNAPSHOT development")
+  }
+
+  private[cozy] def isSnapshotVersion(version: String): Boolean =
+    version.toUpperCase(java.util.Locale.ROOT).contains("SNAPSHOT")
+
+  private[cozy] def publicationPath(config: CozyProjectConfig, projectmetadata: CozyProjectConfig): Option[String] =
     config.value("publication.path").orElse(projectmetadata.value("project.path"))
 
-  private[cozy] def local_repository_dir(base: File, config: CozyProjectConfig, home: File): File =
+  private[cozy] def localRepositoryDir(base: File, config: CozyProjectConfig, home: File): File =
     _config_file(base, config.value("local.repository")).
       orElse(_config_file(base, config.value("cncf.local.repository"))).
       getOrElse(home / ".cncf" / "local")
@@ -635,7 +650,7 @@ object CozyPlugin extends AutoPlugin {
       stripPrefix("-").
       stripSuffix("-")
 
-  private[cozy] def sample_archive_tree_lines(warehousedir: File, root: File, files: Seq[File]): Seq[String] = {
+  private[cozy] def sampleArchiveTreeLines(warehousedir: File, root: File, files: Seq[File]): Seq[String] = {
     val rootlabel = _warehouse_relative_path(warehousedir, root)
     val paths = files.map(file => _relative_path(root, file).split('/').toVector.filter(_.nonEmpty))
     rootlabel +: _render_tree(_tree_nodes(paths), "")
