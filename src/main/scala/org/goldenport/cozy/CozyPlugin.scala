@@ -16,7 +16,8 @@ import scala.sys.process._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
- * @version May. 26, 2026
+ *  version May. 26, 2026
+ * @version Jun.  3, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -1420,24 +1421,8 @@ private[cozy] object CozyDelegatedGenerator {
       val relative = _relative_from_generated_root(generated)
       val destination = targetdir / _normalize_path(relative)
       IO.createDirectory(destination.getParentFile)
-      val content = _inject_cncf_entity_imports(IO.read(generated), relative)
-      IO.write(destination, content)
+      IO.write(destination, IO.read(generated))
       destination
-    }
-  }
-
-  private def _inject_cncf_entity_imports(content: String, relativepath: String): String = {
-    if (!relativepath.startsWith("org/simplemodeling/textus/useraccount/entity/"))
-      content
-    else if (content.contains("import org.goldenport.cncf.entity.*"))
-      content
-    else {
-      val newline = if (content.contains("\r\n")) "\r\n" else "\n"
-      val lines = content.split("\\r?\\n", -1)
-      if (lines.headOption.exists(_.startsWith("package org.simplemodeling.textus.useraccount.entity")))
-        (Vector(lines.head, "", "import org.goldenport.cncf.entity.*") ++ lines.drop(1)).mkString(newline)
-      else
-        content
     }
   }
 
