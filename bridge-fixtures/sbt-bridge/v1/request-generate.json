@@ -4,7 +4,8 @@
   "arguments": [
     "modeler-scala",
     "/tmp/sample.cml",
-    "--save=/tmp/generated"
+    "--save",
+    "/tmp/generated"
   ],
   "settings": {}
 }

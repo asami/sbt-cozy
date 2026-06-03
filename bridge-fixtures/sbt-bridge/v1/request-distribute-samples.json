@@ -3,11 +3,16 @@
   "action": "distribute-samples",
   "arguments": [
     "/tmp/sample-project",
-    "--warehouse=/tmp/warehouse",
-    "--name=textus-tutorial",
-    "--version=0.1.0",
-    "--path=textus/tutorial/textus-tutorial",
-    "--samples-dir=/tmp/sample-project/samples",
+    "--warehouse",
+    "/tmp/warehouse",
+    "--name",
+    "textus-tutorial",
+    "--version",
+    "0.1.0",
+    "--path",
+    "textus/tutorial/textus-tutorial",
+    "--samples-dir",
+    "/tmp/sample-project/samples",
     "--dry-run"
   ],
   "settings": {}

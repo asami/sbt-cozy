@@ -11,7 +11,7 @@ Contract rules:
 - removals, renames, or semantic changes require `v2`
 
 Request contract:
-- JSON file passed by `--request=<file>`
+- JSON file passed by `--request <file>`
 - required fields:
   - `version`
   - `action`

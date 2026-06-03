@@ -17,7 +17,8 @@ import scala.sys.process._
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
  *  version May. 26, 2026
- * @version Jun.  3, 2026
+ *  version Jun.  3, 2026
+ * @version Jun.  4, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -1585,7 +1586,8 @@ private[cozy] object CozySbtBridge {
       arguments = Vector(
         "modeler-scala",
         source.getAbsolutePath,
-        s"--save=${savedir.getAbsolutePath}"
+        "--save",
+        savedir.getAbsolutePath
       )
     )
     _resolve(basedir, explicitProjectDir, delegatecommand, request.copy(settings = settings))
@@ -1612,15 +1614,20 @@ private[cozy] object CozySbtBridge {
         action = "package-car",
         arguments =
           Vector(
-            s"--save=${archive.getAbsolutePath}",
-            s"--main-jar=${mainJar.getAbsolutePath}",
-            s"--name=$name",
-            s"--version=$version",
-            s"--component=$component"
+            "--save",
+            archive.getAbsolutePath,
+            "--main-jar",
+            mainJar.getAbsolutePath,
+            "--name",
+            name,
+            "--version",
+            version,
+            "--component",
+            component
           ) ++
             _csv_arg("lib-jars", libJars.map(_.getAbsolutePath)) ++
             _csv_arg("spi-jars", spiJars.map(_.getAbsolutePath)) ++
-            Vector(s"--project-dir=${projectDir.getAbsolutePath}") ++
+            Vector("--project-dir", projectDir.getAbsolutePath) ++
             _map_arg("extensions", extensions) ++
             _map_arg("config", config)
       ),
@@ -1647,12 +1654,14 @@ private[cozy] object CozySbtBridge {
         action = "package-sar",
         arguments =
           Vector(
-            s"--save=${archive.getAbsolutePath}",
-            s"--source-dir=${sourcedir.getAbsolutePath}"
+            "--save",
+            archive.getAbsolutePath,
+            "--source-dir",
+            sourcedir.getAbsolutePath
           ) ++
             _csv_arg("source-files", sourceFiles) ++
             _csv_arg("extension-jars", extensionJars.map(_.getAbsolutePath)) ++
-            applicationConf.toVector.map(f => s"--application-conf=${f.getAbsolutePath}")
+            applicationConf.toVector.flatMap(f => Vector("--application-conf", f.getAbsolutePath))
       ),
       basedir,
       delegateprojectdir,
@@ -1678,10 +1687,14 @@ private[cozy] object CozySbtBridge {
         arguments =
           Vector(
             projectdir.getAbsolutePath,
-            s"--warehouse=${warehousedir.getAbsolutePath}",
-            s"--name=$name",
-            s"--version=$version",
-            s"--car=${archive.getAbsolutePath}"
+            "--warehouse",
+            warehousedir.getAbsolutePath,
+            "--name",
+            name,
+            "--version",
+            version,
+            "--car",
+            archive.getAbsolutePath
           )
       ),
       basedir,
@@ -1708,10 +1721,14 @@ private[cozy] object CozySbtBridge {
         arguments =
           Vector(
             projectdir.getAbsolutePath,
-            s"--warehouse=${warehousedir.getAbsolutePath}",
-            s"--name=$name",
-            s"--version=$version",
-            s"--sar=${archive.getAbsolutePath}"
+            "--warehouse",
+            warehousedir.getAbsolutePath,
+            "--name",
+            name,
+            "--version",
+            version,
+            "--sar",
+            archive.getAbsolutePath
           )
       ),
       basedir,
@@ -1740,12 +1757,15 @@ private[cozy] object CozySbtBridge {
         arguments =
           Vector(
             projectDir.getAbsolutePath,
-            s"--warehouse=${warehouseDir.getAbsolutePath}",
-            s"--name=$name",
-            s"--version=$version"
+            "--warehouse",
+            warehouseDir.getAbsolutePath,
+            "--name",
+            name,
+            "--version",
+            version
           ) ++
-            publicationPath.toVector.map(x => s"--path=$x") ++
-            samplesDir.toVector.map(f => s"--samples-dir=${f.getAbsolutePath}") ++
+            publicationPath.toVector.flatMap(x => Vector("--path", x)) ++
+            samplesDir.toVector.flatMap(f => Vector("--samples-dir", f.getAbsolutePath)) ++
             (if (dryRun) Vector("--dry-run") else Vector.empty)
       ),
       basedir,
@@ -1777,16 +1797,22 @@ private[cozy] object CozySbtBridge {
         arguments =
           Vector(
             projectDir.getAbsolutePath,
-            s"--save=${savedir.getAbsolutePath}",
-            s"--name=$name",
-            s"--organization=$organization",
-            s"--version=$version",
-            s"--scala-version=$scalaVersion",
-            s"--sbt-version=$sbtVersion"
+            "--save",
+            savedir.getAbsolutePath,
+            "--name",
+            name,
+            "--organization",
+            organization,
+            "--version",
+            version,
+            "--scala-version",
+            scalaVersion,
+            "--sbt-version",
+            sbtVersion
           ) ++
-            kind.toVector.map(x => s"--kind=$x") ++
-            title.toVector.map(x => s"--title=$x") ++
-            publicationPath.toVector.map(x => s"--path=$x")
+            kind.toVector.flatMap(x => Vector("--kind", x)) ++
+            title.toVector.flatMap(x => Vector("--title", x)) ++
+            publicationPath.toVector.flatMap(x => Vector("--path", x))
       ),
       basedir,
       delegateprojectdir,
@@ -1815,10 +1841,12 @@ private[cozy] object CozySbtBridge {
         arguments =
           Vector(
             warehouseDir.getAbsolutePath,
-            s"--save=${savedir.getAbsolutePath}",
-            s"--name=$name"
+            "--save",
+            savedir.getAbsolutePath,
+            "--name",
+            name
           ) ++
-            title.toVector.map(x => s"--title=$x") ++
+            title.toVector.flatMap(x => Vector("--title", x)) ++
             _csv_arg("maven-coordinates", mavenCoordinates) ++
             _csv_arg("repository-artifacts", repositoryArtifacts) ++
             _csv_arg("repository-modules", repositoryModules) ++
@@ -1894,12 +1922,13 @@ private[cozy] object CozySbtBridge {
         val runMainArgs = Vector(
           "sbt-bridge",
           "v1",
-          s"--request=${requestFile.getAbsolutePath}"
+          "--request",
+          requestFile.getAbsolutePath
         ).map(_quote).mkString(" ")
         DelegateExecution(cozyDir, _development_project_command :+ s"runMain cozy.Cozy $runMainArgs")
       case None =>
         val commandprefix = if (delegatecommand.nonEmpty) delegatecommand else Seq("cozy")
-        DelegateExecution(basedir, commandprefix ++ Seq("sbt-bridge", "v1", s"--request=${requestFile.getAbsolutePath}"))
+        DelegateExecution(basedir, commandprefix ++ Seq("sbt-bridge", "v1", "--request", requestFile.getAbsolutePath))
     }
   }
 
@@ -1938,11 +1967,11 @@ private[cozy] object CozySbtBridge {
     values.toVector.sortBy(_._1).map { case (k, v) => s"${_json(k)}: ${_json(v)}" }.mkString("{", ", ", "}")
 
   private def _csv_arg(name: String, values: Seq[String]): Vector[String] =
-    if (values.isEmpty) Vector.empty else Vector(s"--${name}=${values.mkString(",")}")
+    if (values.isEmpty) Vector.empty else Vector(s"--${name}", values.mkString(","))
 
   private def _map_arg(name: String, values: Map[String, String]): Vector[String] =
     if (values.isEmpty) Vector.empty
-    else Vector(s"--${name}=${_json_map(values)}")
+    else Vector(s"--${name}", _json_map(values))
 }
 
 private[cozy] object CozyAppScaffold {

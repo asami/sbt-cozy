@@ -5,7 +5,8 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /*
  * @since   Apr. 23, 2026
- * @version May. 20, 2026
+ *  version May. 20, 2026
+ * @version Jun.  4, 2026
  * @author  ASAMI, Tomoharu
  */
 final class BridgeContractSpec extends AnyFunSuite {
@@ -38,7 +39,7 @@ final class BridgeContractSpec extends AnyFunSuite {
   test("generated bridge request JSON matches canonical generate fixture") {
     val json = CozySbtBridge.renderRequestJsonForTest(
       action = "generate",
-      arguments = Vector("modeler-scala", "/tmp/sample.cml", "--save=/tmp/generated")
+      arguments = Vector("modeler-scala", "/tmp/sample.cml", "--save", "/tmp/generated")
     )
     val expected = Files.readString(_fixture_dir.resolve("request-generate.json"))
     assert(_normalize_json(json) == _normalize_json(expected))
@@ -48,11 +49,16 @@ final class BridgeContractSpec extends AnyFunSuite {
     val json = CozySbtBridge.renderRequestJsonForTest(
       action = "package-car",
       arguments = Vector(
-        "--name=sample-component",
-        "--version=0.1.0",
-        "--save=/tmp/sample-component.car",
-        "--project-dir=/tmp/sample-project",
-        "--main-jar=/tmp/component-main.jar"
+        "--name",
+        "sample-component",
+        "--version",
+        "0.1.0",
+        "--save",
+        "/tmp/sample-component.car",
+        "--project-dir",
+        "/tmp/sample-project",
+        "--main-jar",
+        "/tmp/component-main.jar"
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-package-car.json"))
@@ -63,11 +69,16 @@ final class BridgeContractSpec extends AnyFunSuite {
     val json = CozySbtBridge.renderRequestJsonForTest(
       action = "package-sar",
       arguments = Vector(
-        "--name=sample-subsystem",
-        "--version=0.1.0",
-        "--save=/tmp/sample-subsystem.sar",
-        "--source-dir=/tmp/src",
-        "--source-files=subsystem-descriptor.yaml"
+        "--name",
+        "sample-subsystem",
+        "--version",
+        "0.1.0",
+        "--save",
+        "/tmp/sample-subsystem.sar",
+        "--source-dir",
+        "/tmp/src",
+        "--source-files",
+        "subsystem-descriptor.yaml"
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-package-sar.json"))
@@ -79,10 +90,14 @@ final class BridgeContractSpec extends AnyFunSuite {
       action = "publish-car",
       arguments = Vector(
         "/tmp/sample-project",
-        "--warehouse=/tmp/warehouse",
-        "--name=sample-component",
-        "--version=0.1.0",
-        "--car=/tmp/sample-component.car"
+        "--warehouse",
+        "/tmp/warehouse",
+        "--name",
+        "sample-component",
+        "--version",
+        "0.1.0",
+        "--car",
+        "/tmp/sample-component.car"
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-publish-car.json"))
@@ -94,10 +109,14 @@ final class BridgeContractSpec extends AnyFunSuite {
       action = "publish-sar",
       arguments = Vector(
         "/tmp/sample-project",
-        "--warehouse=/tmp/warehouse",
-        "--name=sample-subsystem",
-        "--version=0.1.0",
-        "--sar=/tmp/sample-subsystem.sar"
+        "--warehouse",
+        "/tmp/warehouse",
+        "--name",
+        "sample-subsystem",
+        "--version",
+        "0.1.0",
+        "--sar",
+        "/tmp/sample-subsystem.sar"
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-publish-sar.json"))
@@ -109,8 +128,10 @@ final class BridgeContractSpec extends AnyFunSuite {
       action = "publish-project",
       arguments = Vector(
         "/tmp/sample-project",
-        "--save=/tmp/publish.d",
-        "--kind=car"
+        "--save",
+        "/tmp/publish.d",
+        "--kind",
+        "car"
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-publish-project.json"))
@@ -122,11 +143,16 @@ final class BridgeContractSpec extends AnyFunSuite {
       action = "distribute-samples",
       arguments = Vector(
         "/tmp/sample-project",
-        "--warehouse=/tmp/warehouse",
-        "--name=textus-tutorial",
-        "--version=0.1.0",
-        "--path=textus/tutorial/textus-tutorial",
-        "--samples-dir=/tmp/sample-project/samples",
+        "--warehouse",
+        "/tmp/warehouse",
+        "--name",
+        "textus-tutorial",
+        "--version",
+        "0.1.0",
+        "--path",
+        "textus/tutorial/textus-tutorial",
+        "--samples-dir",
+        "/tmp/sample-project/samples",
         "--dry-run"
       )
     )
@@ -139,12 +165,18 @@ final class BridgeContractSpec extends AnyFunSuite {
       action = "index-warehouse",
       arguments = Vector(
         "/tmp/warehouse",
-        "--save=/tmp/publish.d",
-        "--name=textus-tutorial",
-        "--maven-coordinates=org.example:textus-tutorial_3",
-        "--repository-artifacts=car,sar",
-        "--repository-modules=textus-tutorial",
-        "--download-samples=textus-tutorial"
+        "--save",
+        "/tmp/publish.d",
+        "--name",
+        "textus-tutorial",
+        "--maven-coordinates",
+        "org.example:textus-tutorial_3",
+        "--repository-artifacts",
+        "car,sar",
+        "--repository-modules",
+        "textus-tutorial",
+        "--download-samples",
+        "textus-tutorial"
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-index-warehouse.json"))

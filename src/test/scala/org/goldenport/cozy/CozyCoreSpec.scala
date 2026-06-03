@@ -13,7 +13,8 @@ import sbt._
  *  version Apr.  1, 2026
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
- * @version May. 26, 2026
+ *  version May. 26, 2026
+ * @version Jun.  4, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -33,6 +34,11 @@ abstract class CozyTestBase extends AnyFunSuite {
     val zip = new ZipFile(path)
     try zip.entries().asScala.map(_.getName).toSet
     finally zip.close()
+  }
+
+  protected def assertBridgeRequestArgument(args: Seq[String]): Unit = {
+    assert(args.takeRight(2).head == "--request")
+    assert(args.last.endsWith(".json"))
   }
 }
 
@@ -417,12 +423,12 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
         delegateprojectdir = None,
         delegatecommand = Seq("cozy"),
         action = "generate",
-        arguments = Vector("modeler-scala", source.getAbsolutePath, s"--save=${saveDir.getAbsolutePath}")
+        arguments = Vector("modeler-scala", source.getAbsolutePath, "--save", saveDir.getAbsolutePath)
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.head == "cozy")
       assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
-      assert(resolved.last.startsWith("--request="))
+      assertBridgeRequestArgument(resolved)
     }
   }
 
@@ -434,7 +440,7 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
         delegateprojectdir = None,
         delegatecommand = command,
         action = "generate",
-        arguments = Vector("modeler-scala", "/tmp/model.cml", "--save=/tmp/out")
+        arguments = Vector("modeler-scala", "/tmp/model.cml", "--save", "/tmp/out")
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.take(2) == Seq("cs", "launch"))
@@ -442,8 +448,8 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
       assert(resolved.contains("org.simplemodeling:cozy_2.12:0.2.17-SNAPSHOT"))
       assert(resolved.contains("cozy.Cozy"))
       assert(resolved.contains("--"))
-      assert(resolved.takeRight(2).head == "v1")
-      assert(resolved.last.startsWith("--request="))
+      assert(resolved.takeRight(4).take(3) == Seq("sbt-bridge", "v1", "--request"))
+      assertBridgeRequestArgument(resolved)
     }
   }
 
@@ -456,12 +462,12 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
         delegateprojectdir = None,
         delegatecommand = Seq("cozy"),
         action = "publish-project",
-        arguments = Vector(dir.getAbsolutePath, s"--save=${out.getAbsolutePath}", "--kind=sample-single")
+        arguments = Vector(dir.getAbsolutePath, "--save", out.getAbsolutePath, "--kind", "sample-single")
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.head == "cozy")
       assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
-      assert(resolved.last.startsWith("--request="))
+      assertBridgeRequestArgument(resolved)
     }
   }
 
@@ -474,7 +480,7 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
         delegateprojectdir = Some(cozyDir),
         delegatecommand = Seq("cozy"),
         action = "package-sar",
-        arguments = Vector("--save=/tmp/sample.sar")
+        arguments = Vector("--save", "/tmp/sample.sar")
       )
       assert(cwd.getAbsolutePath == cozyDir.getAbsolutePath)
       assert(resolved.take(4) == Seq("sbt", "--batch", "-Dsbt.server.autostart=false", "-Dsbt.supershell=false"))
@@ -529,15 +535,18 @@ final class CozyPackagingSpec extends CozyTestBase {
         delegatecommand = command,
         action = "package-sar",
         arguments = Vector(
-          s"--save=${archive.getAbsolutePath}",
-          s"--source-dir=${(dir / "src").getAbsolutePath}",
-          "--source-files=subsystem-descriptor.yaml"
+          "--save",
+          archive.getAbsolutePath,
+          "--source-dir",
+          (dir / "src").getAbsolutePath,
+          "--source-files",
+          "subsystem-descriptor.yaml"
         )
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.head == "cozy")
       assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
-      assert(resolved.last.startsWith("--request="))
+      assertBridgeRequestArgument(resolved)
     }
   }
 
@@ -552,16 +561,20 @@ final class CozyPackagingSpec extends CozyTestBase {
         action = "publish-car",
         arguments = Vector(
           dir.getAbsolutePath,
-          s"--warehouse=${warehouse.getAbsolutePath}",
-          "--name=sample-component",
-          "--version=0.1.0",
-          s"--car=${archive.getAbsolutePath}"
+          "--warehouse",
+          warehouse.getAbsolutePath,
+          "--name",
+          "sample-component",
+          "--version",
+          "0.1.0",
+          "--car",
+          archive.getAbsolutePath
         )
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.head == "cozy")
       assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
-      assert(resolved.last.startsWith("--request="))
+      assertBridgeRequestArgument(resolved)
     }
   }
 
@@ -576,16 +589,20 @@ final class CozyPackagingSpec extends CozyTestBase {
         action = "publish-sar",
         arguments = Vector(
           dir.getAbsolutePath,
-          s"--warehouse=${warehouse.getAbsolutePath}",
-          "--name=sample-subsystem",
-          "--version=0.1.0",
-          s"--sar=${archive.getAbsolutePath}"
+          "--warehouse",
+          warehouse.getAbsolutePath,
+          "--name",
+          "sample-subsystem",
+          "--version",
+          "0.1.0",
+          "--sar",
+          archive.getAbsolutePath
         )
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.head == "cozy")
       assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
-      assert(resolved.last.startsWith("--request="))
+      assertBridgeRequestArgument(resolved)
     }
   }
 }
