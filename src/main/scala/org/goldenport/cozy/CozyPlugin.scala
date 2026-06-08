@@ -18,7 +18,8 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun.  3, 2026
- * @version Jun.  4, 2026
+ *  version Jun.  4, 2026
+ * @version Jun.  9, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -104,6 +105,7 @@ object CozyPlugin extends AutoPlugin {
     val cozySimpleModelingModelVersion = settingKey[String]("simplemodeling-model version propagated to delegated cozy generation and generated CAR project build files.")
     val cozyCncfCollaboratorApiVersion = settingKey[String]("cncf-collaborator-api version propagated to delegated cozy generation and generated CAR project build files.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
+    val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
     val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare runtime classpath file.")
@@ -178,6 +180,7 @@ object CozyPlugin extends AutoPlugin {
     cozySimpleModelingModelVersion := cozyProjectConfig.value.value("generation.versions.simplemodeling_model").getOrElse(_dependency_version((Compile / libraryDependencies).value, "org.simplemodeling", "simplemodeling-model").getOrElse("0.1.2-SNAPSHOT")),
     cozyCncfCollaboratorApiVersion := cozyProjectConfig.value.value("generation.versions.cncf_collaborator_api").getOrElse(_dependency_version((Compile / libraryDependencies).value, "org.goldenport", "cncf-collaborator-api").getOrElse("0.1.0-SNAPSHOT")),
     cozySkipUnchangedGeneration := cozyProjectConfig.value.boolean("generation.skip_unchanged").getOrElse(true),
+    cozyWebDescriptorSync := cozyProjectConfig.value.boolean("generation.web_descriptor_sync").getOrElse(true),
 
     cozyPackaging := cozyProjectConfig.value.value("packaging.kind").getOrElse("car"),
     cozyCarName := s"${moduleName.value}-${version.value}",
@@ -238,6 +241,14 @@ object CozyPlugin extends AutoPlugin {
         log.debug(s"[sbt-cozy] no cozy sources found under ${sourcedir.getAbsolutePath}")
         Seq.empty
       } else {
+        if (cozyWebDescriptorSync.value) {
+          CozyWebDescriptorSync.sync(
+            projectdir = baseDirectory.value,
+            componentname = moduleName.value,
+            cozyfiles = cozyfiles,
+            log = log
+          )
+        }
         val statefile = target.value / "sbt-cozy" / "generation-state.properties"
         val currentinputs = CozyGenerationState.capture(sourcedir, cozyfiles, backend, config)
         val currentoutputs = CozyGenerationState.currentoutputs(targetdir)
@@ -815,6 +826,369 @@ private[cozy] object CozyFileLoader {
         .sortBy(_.getAbsolutePath)
     }
   }
+}
+
+private[cozy] object CozyWebDescriptorSync {
+  private final case class OperationForm(
+    service: String,
+    operation: String,
+    operationType: String,
+    input: Option[String],
+    settings: Map[String, String]
+  ) {
+    def selector(componentname: String): String =
+      Vector(componentname, service, operation).map(_normalize_segment).mkString(".")
+
+    def enabled: Boolean =
+      !settings.get("form").exists(_.equalsIgnoreCase("false"))
+
+    def explicitFormSelection: Boolean =
+      settings.get("form").exists(_.equalsIgnoreCase("true"))
+
+    def access(defaultaccess: Option[String]): Option[String] =
+      settings.get("access").orElse(defaultaccess)
+  }
+
+  private final case class InputModel(attributes: Vector[Attribute])
+  private final case class Attribute(name: String, datatype: String, multiplicity: String, settings: Map[String, String]) {
+    def required: Boolean =
+      multiplicity.trim.toLowerCase(java.util.Locale.ROOT) match {
+        case "1" | "one" => true
+        case _ => false
+      }
+
+    def controlType: String =
+      settings.get("control").getOrElse {
+        datatype.trim.toLowerCase(java.util.Locale.ROOT) match {
+          case "uri" | "url" => "url"
+          case _ => "text"
+        }
+      }
+  }
+
+  private final case class Model(
+    defaultFormAccess: Option[String],
+    defaultStayOnError: Option[String],
+    operations: Vector[OperationForm],
+    inputs: Map[String, InputModel]
+  )
+
+  def sync(
+    projectdir: File,
+    componentname: String,
+    cozyfiles: Seq[File],
+    log: Logger
+  ): Unit = {
+    val model = _parse(cozyfiles)
+    val descriptor = projectdir / "src" / "main" / "web-inf" / "form.yaml"
+    val current = if (descriptor.isFile) IO.read(descriptor) else ""
+    val existingselectors = _form_block_selectors(current)
+    val enabled = model.operations.filter { op =>
+      op.enabled && (op.explicitFormSelection || !existingselectors.contains(op.selector(componentname)))
+    }
+    val generated = enabled.map(_operation_block(componentname, _, model)).toMap
+    if (generated.nonEmpty || model.defaultFormAccess.nonEmpty || model.defaultStayOnError.nonEmpty) {
+      val updated = merge(current, model, generated)
+      if (updated != current) {
+        IO.createDirectory(descriptor.getParentFile)
+        IO.write(descriptor, updated)
+        log.info(s"[sbt-cozy] synchronized ${generated.size} Web form descriptor entr${if (generated.size == 1) "y" else "ies"} from CML")
+      }
+    }
+  }
+
+  private def _parse(files: Seq[File]): Model = {
+    val all = files.toVector.flatMap(file => IO.readLines(file).zipWithIndex.map { case (line, index) => (file, index + 1, line) })
+    var top = ""
+    var service: Option[String] = None
+    var inoperations = false
+    var currentoperation: Option[String] = None
+    var currentoperationsettings = Map.empty[String, String]
+    var currentoperationtype = ""
+    var currentoperationinput: Option[String] = None
+    var serviceform = false
+    var defaultformaccess: Option[String] = None
+    var defaultstayonerror: Option[String] = None
+    var webconcerntarget: Option[String] = None
+    var operations = Vector.empty[OperationForm]
+
+    var inputname: Option[String] = None
+    var inattributetable = false
+    var currentattribute: Option[String] = None
+    var attributes = Vector.empty[Attribute]
+    var attributesettings = Map.empty[String, Map[String, String]]
+    var inputs = Map.empty[String, InputModel]
+
+    def _finish_operation_(): Unit = {
+      for {
+        svc <- service
+        op <- currentoperation
+      } {
+        val selected =
+          currentoperationsettings.get("form").exists(_.equalsIgnoreCase("true")) ||
+            (serviceform && !currentoperationsettings.get("form").exists(_.equalsIgnoreCase("false")))
+        if (selected)
+          operations :+= OperationForm(svc, op, currentoperationtype, currentoperationinput, currentoperationsettings)
+      }
+      currentoperation = None
+      currentoperationsettings = Map.empty
+      currentoperationtype = ""
+      currentoperationinput = None
+    }
+
+    def _finish_input_(): Unit = {
+      inputname.foreach { name =>
+        inputs += name -> InputModel(attributes.map { attr =>
+          attr.copy(settings = attributesettings.getOrElse(attr.name, Map.empty))
+        })
+      }
+      inputname = None
+      attributes = Vector.empty
+      attributesettings = Map.empty
+      currentattribute = None
+      inattributetable = false
+    }
+
+    all.foreach { case (_, _, raw) =>
+      val line = raw.trim
+      if (line.matches("#\\s+WEB\\s*")) {
+        _finish_operation_()
+        _finish_input_()
+        top = "WEB"
+        webconcerntarget = Some("top")
+      } else if (line.startsWith("# ") && !line.matches("#\\s+WEB\\s*")) {
+        _finish_operation_()
+        _finish_input_()
+        top = line.drop(1).trim
+        service = None
+        inoperations = false
+        webconcerntarget = None
+      } else if (top == "WEB") {
+        _yaml_pair(line).foreach {
+          case ("form.access", value) => defaultformaccess = Some(value)
+          case ("form.stayOnError", value) => defaultstayonerror = Some(value)
+          case ("access", value) => defaultformaccess = Some(value)
+          case ("stayOnError", value) => defaultstayonerror = Some(value)
+          case ("stay-on-error", value) => defaultstayonerror = Some(value)
+          case _ =>
+        }
+      } else if (line.startsWith("## ") && top == "SERVICE") {
+        _finish_operation_()
+        _finish_input_()
+        service = Some(line.drop(3).trim)
+        serviceform = false
+        inoperations = false
+        webconcerntarget = None
+      } else if (line.startsWith("## ") && top != "SERVICE") {
+        _finish_operation_()
+        _finish_input_()
+        inputname = Some(line.drop(3).trim)
+        webconcerntarget = None
+      } else if (line.matches("###\\s+OPERATION\\s*")) {
+        inoperations = true
+        webconcerntarget = None
+      } else if (line.matches("###\\s+Attribute\\s*")) {
+        inattributetable = true
+        currentattribute = None
+        webconcerntarget = None
+      } else if (line.startsWith("#### ") && top == "SERVICE" && inoperations) {
+        _finish_operation_()
+        currentoperation = Some(line.drop(5).trim)
+        webconcerntarget = None
+      } else if (line.startsWith("#### ") && inputname.nonEmpty) {
+        currentattribute = Some(line.drop(5).trim)
+        webconcerntarget = None
+      } else if (line.matches("#####\\s+WEB\\s*")) {
+        webconcerntarget =
+          if (currentoperation.nonEmpty) Some("operation")
+          else if (currentattribute.nonEmpty) Some("attribute")
+          else if (service.nonEmpty) Some("service")
+          else Some("top")
+      } else if (line.startsWith("- ")) {
+        _bullet_pair(line).foreach { case (key, value) =>
+          val normalized = _normalize_key(key)
+          if (normalized.startsWith("web.")) {
+            val webkey = normalized.stripPrefix("web.")
+            if (currentoperation.nonEmpty)
+              currentoperationsettings += webkey -> value
+            else if (currentattribute.nonEmpty)
+              currentattribute.foreach { attr =>
+                val current = attributesettings.getOrElse(attr, Map.empty)
+                attributesettings += attr -> (current + (webkey -> value))
+              }
+            else if (service.nonEmpty && webkey == "form")
+              serviceform = value.equalsIgnoreCase("true")
+            else {
+              webkey match {
+                case "form.access" | "access" => defaultformaccess = Some(value)
+                case "form.stayOnError" | "form.stay-on-error" | "stayOnError" | "stay-on-error" => defaultstayonerror = Some(value)
+                case _ =>
+              }
+            }
+          } else {
+            webconcerntarget match {
+              case Some("operation") => currentoperationsettings += normalized -> value
+              case Some("attribute") => currentattribute.foreach { attr =>
+                val current = attributesettings.getOrElse(attr, Map.empty)
+                attributesettings += attr -> (current + (normalized -> value))
+              }
+              case Some("service") if normalized == "form" => serviceform = value.equalsIgnoreCase("true")
+              case _ =>
+                normalized match {
+                  case "type" if currentoperation.nonEmpty => currentoperationtype = value
+                  case "input" if currentoperation.nonEmpty => currentoperationinput = Some(value)
+                  case _ =>
+                }
+            }
+          }
+        }
+      } else if (inattributetable && line.startsWith("|") && line.endsWith("|") && !line.contains("---")) {
+        val cells = line.stripPrefix("|").stripSuffix("|").split("\\|").toVector.map(_.trim)
+        if (cells.size >= 3 && cells.head != "name")
+          attributes :+= Attribute(cells(0), cells(1), cells(2), Map.empty)
+      }
+    }
+    _finish_operation_()
+    _finish_input_()
+    Model(defaultformaccess, defaultstayonerror, operations, inputs)
+  }
+
+  def merge(
+    current: String,
+    model: Model,
+    generated: Map[String, String]
+  ): String = {
+    val withoutgenerated = _remove_generated_blocks(current, generated.keySet)
+    val base = if (withoutgenerated.trim.isEmpty) "form:\n" else withoutgenerated.stripSuffix("\n") + "\n"
+    val withdefault = _sync_default(base, model)
+    val withform = if (withdefault.linesIterator.exists(_.trim == "form:")) withdefault else withdefault + "form:\n"
+    val generatedtext = generated.toVector.sortBy(_._1).map(_._2.stripSuffix("\n")).mkString("\n")
+    (withform.stripSuffix("\n") + "\n" + generatedtext).stripSuffix("\n") + "\n"
+  }
+
+  private def _operation_block(componentname: String, op: OperationForm, model: Model): (String, String) = {
+    val selector = op.selector(componentname)
+    val controls = op.input.flatMap(model.inputs.get).toVector.flatMap(_.attributes)
+    val stay = op.settings.get("stayOnError").orElse(op.settings.get("stay-on-error")).orElse(model.defaultStayOnError)
+    val lines =
+      Vector(s"  $selector:", "    # generated by sbt-cozy from CML WEB metadata") ++
+        op.access(model.defaultFormAccess).map(value => s"    access: ${_normalize_access(value)}").toVector ++
+        op.settings.get("successRedirect").orElse(op.settings.get("success-redirect")).map(value => s"    successRedirect: $value").toVector ++
+        stay.map(value => s"    stayOnError: $value").toVector ++
+        (if (controls.nonEmpty)
+          Vector("    controls:") ++ controls.flatMap { attr =>
+            Vector(
+              s"      ${attr.name}:",
+              s"        type: ${attr.controlType}",
+              s"        required: ${attr.settings.get("required").getOrElse(attr.required.toString)}"
+            ) ++ attr.settings.get("readonly").map(value => s"        readonly: $value").toVector
+          }
+        else Vector.empty)
+    selector -> (lines.mkString("\n") + "\n")
+  }
+
+  private def _remove_generated_blocks(current: String, selectors: Set[String]): String = {
+    if (selectors.isEmpty)
+      current
+    else {
+      val lines = current.linesIterator.toVector
+      val out = scala.collection.mutable.ArrayBuffer.empty[String]
+      var i = 0
+      while (i < lines.size) {
+        val trimmed = lines(i).trim
+        if (lines(i).startsWith("  ") && !lines(i).startsWith("    ") && _form_block_selector(trimmed).exists(selectors.contains)) {
+          i += 1
+          while (i < lines.size && (lines(i).startsWith("    ") || lines(i).trim.isEmpty))
+            i += 1
+        } else {
+          out += lines(i)
+          i += 1
+        }
+      }
+      out.mkString("\n")
+    }
+  }
+
+  private def _sync_default(current: String, model: Model): String = {
+    if (model.defaultFormAccess.isEmpty && model.defaultStayOnError.isEmpty)
+      current
+    else {
+      val lines = current.stripSuffix("\n").linesIterator.toVector
+      val withoutdefault = _remove_default_block(lines).mkString("\n")
+      val body = _default_block(model)
+      if (withoutdefault.trim.isEmpty)
+        body + "\n"
+      else
+        body + "\n" + withoutdefault.stripPrefix("\n").stripSuffix("\n") + "\n"
+    }
+  }
+
+  private def _default_block(model: Model): String = {
+    val lines = Vector("default:", "  form:") ++
+      model.defaultFormAccess.map(value => s"    access: ${_normalize_access(value)}").toVector ++
+      model.defaultStayOnError.map(value => s"    stayOnError: $value").toVector
+    lines.mkString("\n")
+  }
+
+  private def _remove_default_block(lines: Vector[String]): Vector[String] = {
+    val start = lines.indexWhere(_.trim == "default:")
+    if (start < 0)
+      lines
+    else {
+      val end = (start + 1 until lines.size).find { i =>
+        val line = lines(i)
+        line.nonEmpty && !line.startsWith(" ") && !line.startsWith("\t")
+      }.getOrElse(lines.size)
+      lines.take(start) ++ lines.drop(end)
+    }
+  }
+
+  private def _form_block_selector(trimmed: String): Option[String] = {
+    val i = trimmed.indexOf(':')
+    if (i > 0)
+      Some(trimmed.take(i))
+    else
+      None
+  }
+
+  private def _form_block_selectors(text: String): Set[String] =
+    text.linesIterator.collect {
+      case line if line.startsWith("  ") && !line.startsWith("    ") =>
+        _form_block_selector(line.trim)
+    }.flatten.toSet
+
+  private def _bullet_pair(line: String): Option[(String, String)] = {
+    val body = line.stripPrefix("- ").trim
+    val i = body.indexOf("::")
+    if (i >= 0) Some(body.take(i).trim -> body.drop(i + 2).trim) else None
+  }
+
+  private def _yaml_pair(line: String): Option[(String, String)] = {
+    val i = line.indexOf(':')
+    if (i >= 0) {
+      val key = line.take(i).trim
+      val value = line.drop(i + 1).trim
+      if (key.nonEmpty && value.nonEmpty) Some(key -> value) else None
+    } else None
+  }
+
+  private def _normalize_key(value: String): String =
+    value.trim.replace("_", "-")
+
+  private def _normalize_segment(value: String): String = {
+    val s = value.trim
+    s.zipWithIndex.flatMap { case (c, i) =>
+      if (c.isUpper && i > 0) Vector('-', c.toLower)
+      else Vector(c.toLower)
+    }.mkString.replace("_", "-")
+  }
+
+  private def _normalize_access(value: String): String =
+    value.trim.toLowerCase(java.util.Locale.ROOT) match {
+      case "public" => "anonymous"
+      case "protected" => "authenticated"
+      case x => x
+    }
 }
 
 private[cozy] object CozyGenerationState {
