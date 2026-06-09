@@ -17,8 +17,6 @@ import scala.sys.process._
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
  *  version May. 26, 2026
- *  version Jun.  3, 2026
- *  version Jun.  4, 2026
  * @version Jun.  9, 2026
  * @author  ASAMI, Tomoharu
  */
@@ -1935,16 +1933,21 @@ private[cozy] object CozySbtBridge {
   )
 
   private val _coursier_repositories = Seq(
+    "--repository", "central",
+    "--repository", "https://www.simplemodeling.org/repository/maven",
     "--repository", "https://raw.github.com/asami/maven-repository/2020/releases",
     "--repository", "https://raw.github.com/asami/maven-repository/2025/releases",
     "--repository", "https://maven.pkg.github.com/asami/maven-repository"
   )
 
+  private val _coursier_channels = Seq(
+    "--channel", "https://www.simplemodeling.org/repository/cozy/coursier-channel.json"
+  )
+
   private[cozy] def coursierCommand(version: String): Seq[String] = {
     val launcher = sys.env.getOrElse("SBT_COZY_COURSIER_COMMAND", "cs")
-    val local = if (version.endsWith("-SNAPSHOT")) Seq("--repository", "ivy2Local") else Seq.empty
-    Seq(launcher, "launch") ++ local ++ _coursier_repositories ++
-      Seq(s"org.simplemodeling:cozy_2.12:$version", "-M", "cozy.Cozy", "--")
+    Seq(launcher, "launch") ++ _coursier_channels ++ _coursier_repositories ++
+      Seq("cozy", "--", "--runtime", version)
   }
 
   def resolveGenerate(

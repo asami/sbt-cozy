@@ -265,11 +265,11 @@ cozyManifestMetadata ++= Map(
 
 Recommended usage:
 
-- normal use: install/update the `cozy` command and let `sbt-cozy` call it directly
+- normal use: install/update the `cozy` launcher command and let `sbt-cozy` call it directly
 - development against an in-progress `cozy` repo: set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))`
 - development against a published local SNAPSHOT: run `sbt publishLocal` in `cozy`, then set `cozyDelegateCoursierVersion := Some("0.2.17-SNAPSHOT")` or `SBT_COZY_COURSIER_VERSION=0.2.17-SNAPSHOT`
 
-The default bridge route always launches the shell command `cozy` and passes the `sbt-bridge` subcommand to it. The coursier route is a development route and requires an explicit `cozy` version.
+The default bridge route always launches the shell command `cozy` and passes the `sbt-bridge` subcommand to it. The coursier route is a development route that launches the `cozy` launcher app from the Cozy Coursier channel and passes the explicit Cozy runtime version with `--runtime`.
 
 Bridge governance:
 

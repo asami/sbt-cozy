@@ -14,7 +14,6 @@ import sbt._
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
  *  version May. 26, 2026
- *  version Jun.  4, 2026
  * @version Jun.  9, 2026
  * @author  ASAMI, Tomoharu
  */
@@ -782,7 +781,7 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
     }
   }
 
-  test("bridge can use explicit coursier version during development") {
+  test("bridge can use explicit coursier version through cozy launcher during development") {
     withTempDir("sbt-cozy-delegate") { dir =>
       val command = CozySbtBridge.coursierCommand("0.2.17-SNAPSHOT")
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
@@ -794,9 +793,11 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.take(2) == Seq("cs", "launch"))
-      assert(resolved.contains("ivy2Local"))
-      assert(resolved.contains("org.simplemodeling:cozy_2.12:0.2.17-SNAPSHOT"))
-      assert(resolved.contains("cozy.Cozy"))
+      assert(resolved.contains("--channel"))
+      assert(resolved.contains("https://www.simplemodeling.org/repository/cozy/coursier-channel.json"))
+      assert(resolved.contains("cozy"))
+      assert(resolved.contains("--runtime"))
+      assert(resolved.contains("0.2.17-SNAPSHOT"))
       assert(resolved.contains("--"))
       assert(resolved.takeRight(4).take(3) == Seq("sbt-bridge", "v1", "--request"))
       assertBridgeRequestArgument(resolved)
