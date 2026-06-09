@@ -72,6 +72,111 @@ final class CozyPublishVersionPolicySpec extends CozyTestBase {
   }
 }
 
+final class CozyCoursierChannelSpec extends CozyTestBase {
+  test("adds a Coursier channel entry without losing existing entries") {
+    val existing =
+      """{
+        |  "cozy": {
+        |    "repositories": ["central"],
+        |    "dependencies": ["org.simplemodeling:cozy-launcher_3:0.1.0"],
+        |    "mainClass": "cozy.launcher.CozyLauncherMain"
+        |  }
+        |}
+        |""".stripMargin
+
+    val result = CozyPlugin.coursierChannelJson(
+      Some(existing),
+      Seq(CozyCoursierChannelEntry(
+        name = "cozy-runtime",
+        repositories = Seq("central", "https://www.simplemodeling.org/repository/maven"),
+        dependencies = Seq("org.simplemodeling:cozy_2.12:0.2.20"),
+        mainClass = "cozy.Cozy"
+      ))
+    )
+
+    assert(result.contains("\"cozy\""))
+    assert(result.contains("\"cozy-runtime\""))
+    assert(result.contains("org.simplemodeling:cozy-launcher_3:0.1.0"))
+    assert(result.contains("org.simplemodeling:cozy_2.12:0.2.20"))
+  }
+
+  test("replaces only matching Coursier channel entries") {
+    val existing =
+      """{
+        |  "cozy": {
+        |    "repositories": ["central"],
+        |    "dependencies": ["org.simplemodeling:cozy-launcher_3:0.1.0"],
+        |    "mainClass": "cozy.launcher.CozyLauncherMain"
+        |  },
+        |  "cozy-runtime": {
+        |    "repositories": ["central"],
+        |    "dependencies": ["org.simplemodeling:cozy_2.12:0.2.19"],
+        |    "mainClass": "cozy.Cozy"
+        |  }
+        |}
+        |""".stripMargin
+
+    val result = CozyPlugin.coursierChannelJson(
+      Some(existing),
+      Seq(CozyCoursierChannelEntry(
+        name = "cozy-runtime",
+        repositories = Seq("central"),
+        dependencies = Seq("org.simplemodeling:cozy_2.12:0.2.20"),
+        mainClass = "cozy.Cozy"
+      ))
+    )
+
+    assert(result.contains("org.simplemodeling:cozy-launcher_3:0.1.0"))
+    assert(result.contains("org.simplemodeling:cozy_2.12:0.2.20"))
+    assert(!result.contains("org.simplemodeling:cozy_2.12:0.2.19"))
+  }
+
+  test("does not accumulate indentation when preserving existing entries") {
+    val first = CozyPlugin.coursierChannelJson(
+      None,
+      Seq(CozyCoursierChannelEntry(
+        name = "cozy",
+        repositories = Seq("central"),
+        dependencies = Seq("org.simplemodeling:cozy-launcher_3:0.1.0"),
+        mainClass = "cozy.launcher.CozyLauncherMain"
+      ))
+    )
+    val second = CozyPlugin.coursierChannelJson(
+      Some(first),
+      Seq(CozyCoursierChannelEntry(
+        name = "cozy-runtime",
+        repositories = Seq("central"),
+        dependencies = Seq("org.simplemodeling:cozy_2.12:0.2.20"),
+        mainClass = "cozy.Cozy"
+      ))
+    )
+    val third = CozyPlugin.coursierChannelJson(
+      Some(second),
+      Seq(CozyCoursierChannelEntry(
+        name = "cozy-runtime",
+        repositories = Seq("central"),
+        dependencies = Seq("org.simplemodeling:cozy_2.12:0.2.21"),
+        mainClass = "cozy.Cozy"
+      ))
+    )
+
+    assert(!third.contains("      \"repositories\""))
+    assert(third.contains("    \"repositories\""))
+    assert(third.contains("org.simplemodeling:cozy-launcher_3:0.1.0"))
+    assert(third.contains("org.simplemodeling:cozy_2.12:0.2.21"))
+  }
+
+  test("derives warehouse root from a Maven repository publish target") {
+    withTempDir("sbt-cozy-coursier-channel-warehouse") { dir =>
+      val warehouse = dir / "warehouse"
+      val repository = warehouse / "repository" / "maven"
+      val derived = CozyPlugin.coursierChannelWarehouseDirFromMavenRepository(repository)
+
+      assert(derived.getCanonicalFile == warehouse.getCanonicalFile)
+    }
+  }
+}
+
 final class CozyConfigValidatorSpec extends CozyTestBase {
   test("accepts default config") {
     assert(CozyConfigValidator.validate(CozyConfig.default) == Right(()))

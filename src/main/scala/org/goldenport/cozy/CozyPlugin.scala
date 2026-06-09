@@ -86,8 +86,18 @@ object CozyProjectConfig {
   }
 }
 
+final case class CozyCoursierChannelEntry(
+  name: String,
+  repositories: Seq[String],
+  dependencies: Seq[String],
+  mainClass: String
+)
+
 object CozyPlugin extends AutoPlugin {
   object autoImport {
+    type CozyCoursierChannelEntry = org.goldenport.cozy.CozyCoursierChannelEntry
+    val CozyCoursierChannelEntry = org.goldenport.cozy.CozyCoursierChannelEntry
+
     val cozyConfigFile = settingKey[File]("Project-local Cozy config file, normally .cozy/config.yaml")
     val cozyProjectConfig = settingKey[CozyProjectConfig]("Parsed project-local Cozy config")
     val cozyProjectFile = settingKey[File]("Project publication metadata file, normally project.yaml")
@@ -129,6 +139,9 @@ object CozyPlugin extends AutoPlugin {
     val cozyPublicationTitle = settingKey[Option[String]]("Optional publication display title")
     val cozyPublicationPath = settingKey[Option[String]]("Optional publication site path from publication.path or project.path")
     val cozyPublicationSamplesDir = settingKey[Option[File]]("Optional sample collection directory for sample-multi publication and distribution")
+    val cozyCoursierChannelWarehouseDir = settingKey[Option[File]]("Optional warehouse root for Coursier channel descriptor publication")
+    val cozyCoursierChannelPath = settingKey[String]("Warehouse-relative Coursier channel descriptor path")
+    val cozyCoursierChannelEntries = settingKey[Seq[CozyCoursierChannelEntry]]("Coursier channel entries published by this project")
 
     val cozyBuildCar = taskKey[File]("Build Car archive from compiled outputs")
     val cozyBuildSar = taskKey[File]("Build Sar archive from cozy source definitions")
@@ -149,6 +162,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyDistribute = taskKey[File]("Copy the configured CAR or SAR archive to the release distribution repository")
     val cozyPublishProject = taskKey[File]("Generate SmartDox site BoK publication sources from this sbt project")
     val cozyIndexWarehouse = taskKey[File]("Generate publish.d artifact and release metadata by indexing the warehouse")
+    val cozyPublishCoursierChannel = taskKey[File]("Publish configured Coursier channel entries to the warehouse")
     val cozyAppName = settingKey[String]("Application name used by cozyScaffoldApp.")
     val cozyAppRootDir = settingKey[File]("Target directory where cozyScaffoldApp writes the application scaffold.")
     val cozyScaffoldApp = taskKey[Seq[File]]("Generate an application root scaffold with component/ and subsystem/ modules.")
@@ -211,6 +225,9 @@ object CozyPlugin extends AutoPlugin {
     cozyPublicationTitle := cozyProjectConfig.value.value("publication.title"),
     cozyPublicationPath := publicationPath(cozyProjectConfig.value, cozyProjectMetadata.value),
     cozyPublicationSamplesDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("publication.samples_dir")),
+    cozyCoursierChannelWarehouseDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("coursier.channel.warehouse")),
+    cozyCoursierChannelPath := cozyProjectConfig.value.value("coursier.channel.path").getOrElse("repository/cozy/coursier-channel.json"),
+    cozyCoursierChannelEntries := Seq.empty,
     cozyAppName := cozyProjectConfig.value.value("scaffold.app_name").getOrElse(moduleName.value),
     cozyAppRootDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("scaffold.app_root_dir")).getOrElse(baseDirectory.value / cozyAppName.value),
 
@@ -573,6 +590,15 @@ object CozyPlugin extends AutoPlugin {
       out
     },
 
+    cozyPublishCoursierChannel := {
+      publishCoursierChannelFile(
+        warehouse = cozyCoursierChannelWarehouseDir.value.getOrElse(coursierChannelWarehouseDir(publishTo.value, cozyWarehouseDir.value)),
+        channelpath = cozyCoursierChannelPath.value,
+        entries = cozyCoursierChannelEntries.value,
+        log = streams.value.log
+      )
+    },
+
     cozyScaffoldApp := {
       val generated = CozyAppScaffold.generate(
         CozyAppScaffold.Spec(
@@ -634,6 +660,217 @@ object CozyPlugin extends AutoPlugin {
     _config_file(base, config.value("local.repository")).
       orElse(_config_file(base, config.value("cncf.local.repository"))).
       getOrElse(home / ".cncf" / "local")
+
+  private[cozy] def coursierChannelWarehouseDir(publishresolver: Option[Resolver], fallback: File): File =
+    publishresolver.
+      flatMap(coursierChannelRepositoryFile).
+      map(coursierChannelWarehouseDirFromMavenRepository).
+      getOrElse(fallback)
+
+  private[cozy] def coursierChannelRepositoryFile(resolver: Resolver): Option[File] =
+    resolver match {
+      case m: MavenRepository =>
+        val root = m.root
+        if (root.startsWith("file:"))
+          Some(new File(new java.net.URI(root)))
+        else
+          Some(file(root))
+      case f: FileRepository =>
+        f.patterns.artifactPatterns.headOption.flatMap { pattern =>
+          val marker = "/[organisation]/"
+          val index = pattern.indexOf(marker)
+          if (index >= 0)
+            Some(file(pattern.take(index)))
+          else
+            None
+        }
+      case _ =>
+        None
+    }
+
+  private[cozy] def coursierChannelWarehouseDirFromMavenRepository(repository: File): File =
+    repository.getCanonicalFile match {
+      case canonical
+          if canonical.getName == "maven" &&
+            canonical.getParentFile != null &&
+            canonical.getParentFile.getName == "repository" =>
+        canonical.getParentFile.getParentFile
+      case canonical if canonical.getName == "maven" =>
+        canonical.getParentFile
+      case canonical =>
+        sys.error(
+          s"[sbt-cozy] Coursier channel publish requires publishTo to point at a Maven repository " +
+            s"under a warehouse, but got: ${canonical}"
+        )
+    }
+
+  private[cozy] def coursierChannelJson(existing: Option[String], entries: Seq[org.goldenport.cozy.CozyCoursierChannelEntry]): String = {
+    val incoming = entries.map(_.name).toSet
+    val preserved = existing.toVector.flatMap(parseCoursierChannelEntries).filterNot { case (name, _) =>
+      incoming.contains(name)
+    }
+    val rendered = preserved ++ entries.map(entry => entry.name -> renderCoursierChannelEntry(entry))
+    renderCoursierChannel(rendered)
+  }
+
+  private[cozy] def parseCoursierChannelEntries(text: String): Vector[(String, String)] = {
+    val source = text.trim
+    if (source.isEmpty)
+      Vector.empty
+    else {
+      val start = source.indexOf('{')
+      val end = source.lastIndexOf('}')
+      if (start < 0 || end <= start)
+        sys.error("[sbt-cozy] invalid Coursier channel JSON: root object not found")
+      var i = start + 1
+      val entries = Vector.newBuilder[(String, String)]
+      def _skip_ws_and_commas_(): Unit =
+        while (i < end && (source.charAt(i).isWhitespace || source.charAt(i) == ',')) i += 1
+      while (i < end) {
+        _skip_ws_and_commas_()
+        if (i < end) {
+          if (source.charAt(i) != '"')
+            sys.error(s"[sbt-cozy] invalid Coursier channel JSON near offset $i: expected entry name")
+          val key = _read_json_string(source, i)
+          i = key._2
+          while (i < end && source.charAt(i).isWhitespace) i += 1
+          if (i >= end || source.charAt(i) != ':')
+            sys.error(s"[sbt-cozy] invalid Coursier channel JSON near offset $i: expected ':'")
+          i += 1
+          while (i < end && source.charAt(i).isWhitespace) i += 1
+          if (i >= end || source.charAt(i) != '{')
+            sys.error(s"[sbt-cozy] invalid Coursier channel JSON near offset $i: expected entry object")
+          val valuestart = i
+          i = _read_json_object_end(source, i)
+          entries += key._1 -> source.substring(valuestart, i)
+        }
+      }
+      entries.result()
+    }
+  }
+
+  private[cozy] def renderCoursierChannelEntry(entry: org.goldenport.cozy.CozyCoursierChannelEntry): String = {
+    val repositories = _render_json_string_array(entry.repositories)
+    val dependencies = _render_json_string_array(entry.dependencies)
+    s"""{
+       |  "repositories": $repositories,
+       |  "dependencies": $dependencies,
+       |  "mainClass": "${_json_escape(entry.mainClass)}"
+       |}""".stripMargin
+  }
+
+  private[cozy] def publishCoursierChannelFile(
+    warehouse: File,
+    channelpath: String,
+    entries: Seq[org.goldenport.cozy.CozyCoursierChannelEntry],
+    log: sbt.util.Logger
+  ): File = {
+    if (entries.isEmpty)
+      sys.error("[sbt-cozy] cozyPublishCoursierChannel requires at least one cozyCoursierChannelEntries value")
+    val target = warehouse / channelpath
+    val existing =
+      if (target.isFile)
+        Some(IO.read(target))
+      else
+        None
+    IO.createDirectory(target.getParentFile)
+    IO.write(target, coursierChannelJson(existing, entries))
+    log.info(s"[sbt-cozy] published Coursier channel entries ${entries.map(_.name).mkString(", ")} to ${target.getAbsolutePath}")
+    target
+  }
+
+  private def renderCoursierChannel(entries: Seq[(String, String)]): String = {
+    val rendered = entries.map { case (name, value) =>
+      val lines = value.linesIterator.toVector
+      val head = lines.headOption.getOrElse("{}")
+      val tail = lines.drop(1).map { line =>
+        val stripped = line.stripLeading
+        if (stripped == "}")
+          s"  $stripped"
+        else
+          s"    $stripped"
+      }
+      (s"""  "${_json_escape(name)}": $head""" +: tail).mkString("\n")
+    }
+    (Vector("{") ++ rendered.zipWithIndex.map { case (entry, index) =>
+      if (index + 1 == rendered.length) entry else s"$entry,"
+    } ++ Vector("}")).mkString("\n") + "\n"
+  }
+
+  private def _render_json_string_array(values: Seq[String]): String =
+    values.map(value => s""""${_json_escape(value)}"""").mkString("[", ", ", "]")
+
+  private def _read_json_string(source: String, start: Int): (String, Int) = {
+    val out = new StringBuilder
+    var i = start + 1
+    var escaped = false
+    var done = false
+    while (i < source.length && !done) {
+      val c = source.charAt(i)
+      if (escaped) {
+        out.append(c)
+        escaped = false
+      } else {
+        c match {
+          case '\\' => escaped = true
+          case '"' => done = true
+          case other => out.append(other)
+        }
+      }
+      i += 1
+    }
+    if (!done)
+      sys.error(s"[sbt-cozy] invalid Coursier channel JSON near offset $start: unterminated string")
+    out.toString -> i
+  }
+
+  private def _read_json_object_end(source: String, start: Int): Int = {
+    var i = start
+    var depth = 0
+    var instring = false
+    var escaped = false
+    var done = false
+    while (i < source.length && !done) {
+      val c = source.charAt(i)
+      if (instring) {
+        if (escaped)
+          escaped = false
+        else {
+          c match {
+            case '\\' => escaped = true
+            case '"' => instring = false
+            case _ => ()
+          }
+        }
+      } else {
+        c match {
+          case '"' => instring = true
+          case '{' => depth += 1
+          case '}' =>
+            depth -= 1
+            if (depth == 0) done = true
+          case _ => ()
+        }
+      }
+      i += 1
+    }
+    if (!done)
+      sys.error(s"[sbt-cozy] invalid Coursier channel JSON near offset $start: unterminated object")
+    i
+  }
+
+  private def _json_escape(value: String): String =
+    value.flatMap {
+      case '\\' => "\\\\"
+      case '"' => "\\\""
+      case '\b' => "\\b"
+      case '\f' => "\\f"
+      case '\n' => "\\n"
+      case '\r' => "\\r"
+      case '\t' => "\\t"
+      case c if c < ' ' => f"\\u${c.toInt}%04x"
+      case c => c.toString
+    }
 
   private def _sample_download_root(warehousedir: File, publicationname: String, publicationpath: Option[String]): File =
     warehousedir / "repository" / "download" / publicationpath.getOrElse(s"samples/${publicationname}")
