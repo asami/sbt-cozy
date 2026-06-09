@@ -2691,7 +2691,7 @@ private[cozy] object CozyAppScaffold {
 |  resolvers += Resolver.defaultLocal,
 |  resolvers += Resolver.file("Local Ivy", file(Path.userHome.absolutePath + "/.ivy2/local"))(Resolver.ivyStylePatterns),
 |  resolvers += "Local Maven Repository" at ("file://" + Path.userHome.absolutePath + "/.m2/repository"),
-|  resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/maven"
+|  resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/repository/maven"
 |)
 |
 |lazy val root = project
