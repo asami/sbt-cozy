@@ -17,7 +17,7 @@ import scala.sys.process._
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
  *  version May. 26, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 18, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -109,9 +109,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyDelegateProjectDir = settingKey[Option[File]]("Optional path to cozy project used by delegated generation during development.")
     val cozyDelegateCoursierVersion = settingKey[Option[String]]("Optional cozy version used to execute delegated generation through coursier during development.")
     val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation and packaging.")
-    val cozyCncfVersion = settingKey[String]("CNCF version propagated to delegated cozy generation and generated CAR project build files.")
-    val cozySimpleModelingModelVersion = settingKey[String]("simplemodeling-model version propagated to delegated cozy generation and generated CAR project build files.")
-    val cozyCncfCollaboratorApiVersion = settingKey[String]("cncf-collaborator-api version propagated to delegated cozy generation and generated CAR project build files.")
+    val cozyGenerationVersionOverrides = settingKey[Map[String, String]]("Explicit generation version overrides passed to Cozy bridge settings.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
@@ -163,9 +161,6 @@ object CozyPlugin extends AutoPlugin {
     val cozyPublishProject = taskKey[File]("Generate SmartDox site BoK publication sources from this sbt project")
     val cozyIndexWarehouse = taskKey[File]("Generate publish.d artifact and release metadata by indexing the warehouse")
     val cozyPublishCoursierChannel = taskKey[File]("Publish configured Coursier channel entries to the warehouse")
-    val cozyAppName = settingKey[String]("Application name used by cozyScaffoldApp.")
-    val cozyAppRootDir = settingKey[File]("Target directory where cozyScaffoldApp writes the application scaffold.")
-    val cozyScaffoldApp = taskKey[Seq[File]]("Generate an application root scaffold with component/ and subsystem/ modules.")
   }
 
   import autoImport._
@@ -188,9 +183,7 @@ object CozyPlugin extends AutoPlugin {
       val command = cozyProjectConfig.value.list("generation.delegate.command")
       if (command.nonEmpty) command else cozyDelegateCoursierVersion.value.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy"))
     },
-    cozyCncfVersion := cozyProjectConfig.value.value("generation.versions.cncf").getOrElse(_dependency_version((Compile / libraryDependencies).value, "org.goldenport", "goldenport-cncf").getOrElse("0.4.2-SNAPSHOT")),
-    cozySimpleModelingModelVersion := cozyProjectConfig.value.value("generation.versions.simplemodeling_model").getOrElse(_dependency_version((Compile / libraryDependencies).value, "org.simplemodeling", "simplemodeling-model").getOrElse("0.1.2-SNAPSHOT")),
-    cozyCncfCollaboratorApiVersion := cozyProjectConfig.value.value("generation.versions.cncf_collaborator_api").getOrElse(_dependency_version((Compile / libraryDependencies).value, "org.goldenport", "cncf-collaborator-api").getOrElse("0.1.0-SNAPSHOT")),
+    cozyGenerationVersionOverrides := Map.empty,
     cozySkipUnchangedGeneration := cozyProjectConfig.value.boolean("generation.skip_unchanged").getOrElse(true),
     cozyWebDescriptorSync := cozyProjectConfig.value.boolean("generation.web_descriptor_sync").getOrElse(true),
 
@@ -228,9 +221,6 @@ object CozyPlugin extends AutoPlugin {
     cozyCoursierChannelWarehouseDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("coursier.channel.warehouse")),
     cozyCoursierChannelPath := cozyProjectConfig.value.value("coursier.channel.path").getOrElse("repository/cozy/coursier-channel.json"),
     cozyCoursierChannelEntries := Seq.empty,
-    cozyAppName := cozyProjectConfig.value.value("scaffold.app_name").getOrElse(moduleName.value),
-    cozyAppRootDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("scaffold.app_root_dir")).getOrElse(baseDirectory.value / cozyAppName.value),
-
     cozyGenerate := {
       val sourcedir = cozySourceDir.value
       val targetdir = cozyTargetDir.value
@@ -238,11 +228,7 @@ object CozyPlugin extends AutoPlugin {
       val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val delegateprojectdir = cozyDelegateProjectDir.value
       val delegatecommand = cozyDelegateCommand.value
-      val dependencyversions = CozyDependencyVersions(
-        cozyCncfVersion.value,
-        cozySimpleModelingModelVersion.value,
-        cozyCncfCollaboratorApiVersion.value
-      )
+      val generationversionoverrides = cozyGenerationVersionOverrides.value
       val skipUnchanged = cozySkipUnchangedGeneration.value
       val log = streams.value.log
 
@@ -265,7 +251,7 @@ object CozyPlugin extends AutoPlugin {
           )
         }
         val statefile = target.value / "sbt-cozy" / "generation-state.properties"
-        val currentinputs = CozyGenerationState.capture(sourcedir, cozyfiles, backend, config)
+        val currentinputs = CozyGenerationState.capture(sourcedir, cozyfiles, backend, config, generationversionoverrides)
         val currentoutputs = CozyGenerationState.currentoutputs(targetdir)
 
         if (skipUnchanged && CozyGenerationState.isUpToDate(statefile, currentinputs, currentoutputs)) {
@@ -285,7 +271,7 @@ object CozyPlugin extends AutoPlugin {
               basedir = baseDirectory.value,
               delegateprojectdir = delegateprojectdir,
               delegatecommand = delegatecommand,
-              dependencyversions = dependencyversions,
+              settings = generationversionoverrides,
               log = log
             )
             CozyGenerationState.write(statefile, currentinputs)
@@ -599,25 +585,6 @@ object CozyPlugin extends AutoPlugin {
       )
     },
 
-    cozyScaffoldApp := {
-      val generated = CozyAppScaffold.generate(
-        CozyAppScaffold.Spec(
-          appName = cozyAppName.value,
-          rootDir = cozyAppRootDir.value,
-          organization = organization.value,
-          version = version.value,
-          scalaVersion = scalaVersion.value,
-          sbtVersion = appConfiguration.value.provider.id.version,
-          pluginVersion = CozyAppScaffold.CurrentPluginVersion,
-          cncfVersion = cozyCncfVersion.value,
-          simpleModelingModelVersion = cozySimpleModelingModelVersion.value,
-          cncfCollaboratorApiVersion = cozyCncfCollaboratorApiVersion.value
-        )
-      )
-      streams.value.log.info(s"[sbt-cozy] scaffolded application root: ${cozyAppRootDir.value.getAbsolutePath}")
-      generated
-    },
-
     cozyRuntimeClasspathFile := {
       val out = target.value / "cncf.d" / "runtime-classpath.txt"
       val classpath = (Compile / fullClasspath).value
@@ -710,7 +677,7 @@ object CozyPlugin extends AutoPlugin {
       incoming.contains(name)
     }
     val rendered = preserved ++ entries.map(entry => entry.name -> renderCoursierChannelEntry(entry))
-    renderCoursierChannel(rendered)
+    _render_coursier_channel(rendered)
   }
 
   private[cozy] def parseCoursierChannelEntries(text: String): Vector[(String, String)] = {
@@ -779,7 +746,7 @@ object CozyPlugin extends AutoPlugin {
     target
   }
 
-  private def renderCoursierChannel(entries: Seq[(String, String)]): String = {
+  private def _render_coursier_channel(entries: Seq[(String, String)]): String = {
     val rendered = entries.map { case (name, value) =>
       val lines = value.linesIterator.toVector
       val head = lines.headOption.getOrElse("{}")
@@ -965,12 +932,6 @@ object CozyPlugin extends AutoPlugin {
         else
           file(x)
       if (f.isAbsolute) f else base / f.getPath
-    }
-
-  private def _dependency_version(deps: Seq[ModuleID], org: String, modulebasename: String): Option[String] =
-    deps.collectFirst {
-      case m if m.organization == org && (m.name == modulebasename || m.name.startsWith(modulebasename + "_")) =>
-        m.revision
     }
 
   private def _parse_validated_model(cozyfiles: Seq[File]): CozyModel = {
@@ -1427,18 +1388,20 @@ private[cozy] object CozyWebDescriptorSync {
 }
 
 private[cozy] object CozyGenerationState {
-  private val _state_version = "1"
+  private val _state_version = "2"
   private val _input_prefix = "input."
+  private val _setting_prefix = "setting."
 
   final case class Inputs(
     backend: String,
     packagePrefix: String,
     generateDerivedAggregates: Boolean,
     generateDerivedViews: Boolean,
+    settings: Vector[(String, String)],
     files: Vector[(String, Long)]
   )
 
-  def capture(sourcedir: File, cozyfiles: Seq[File], backend: String, config: CozyConfig): Inputs = {
+  def capture(sourcedir: File, cozyfiles: Seq[File], backend: String, config: CozyConfig, settings: Map[String, String] = Map.empty): Inputs = {
     val files = cozyfiles.map { path =>
       CozyPackaging.relativepath(sourcedir, path).replace('\\', '/') -> path.lastModified()
     }.toVector.sortBy(_._1)
@@ -1447,6 +1410,7 @@ private[cozy] object CozyGenerationState {
       packagePrefix = config.packagePrefix.getOrElse(""),
       generateDerivedAggregates = config.generateDerivedAggregates,
       generateDerivedViews = config.generateDerivedViews,
+      settings = settings.toVector.sortBy(_._1),
       files = files
     )
   }
@@ -1475,6 +1439,12 @@ private[cozy] object CozyGenerationState {
     properties.setProperty("packagePrefix", inputs.packagePrefix)
     properties.setProperty("generateDerivedAggregates", inputs.generateDerivedAggregates.toString)
     properties.setProperty("generateDerivedViews", inputs.generateDerivedViews.toString)
+    properties.setProperty("setting.count", inputs.settings.size.toString)
+    inputs.settings.zipWithIndex.foreach {
+      case ((key, value), index) =>
+        properties.setProperty(s"${_setting_prefix}${index}.key", key)
+        properties.setProperty(s"${_setting_prefix}${index}.value", value)
+    }
     properties.setProperty("input.count", inputs.files.size.toString)
     inputs.files.zipWithIndex.foreach {
       case ((path, timestamp), index) =>
@@ -1500,8 +1470,14 @@ private[cozy] object CozyGenerationState {
       if (properties.getProperty("version") != _state_version) {
         None
       } else {
-        val count = Option(properties.getProperty("input.count")).flatMap(_parse_int).getOrElse(0)
-        val files = Vector.tabulate(count) { index =>
+        val settingcount = Option(properties.getProperty("setting.count")).flatMap(_parse_int).getOrElse(0)
+        val settings = Vector.tabulate(settingcount) { index =>
+          val key = properties.getProperty(s"${_setting_prefix}${index}.key")
+          val value = properties.getProperty(s"${_setting_prefix}${index}.value")
+          key -> value
+        }
+        val inputcount = Option(properties.getProperty("input.count")).flatMap(_parse_int).getOrElse(0)
+        val files = Vector.tabulate(inputcount) { index =>
           val path = properties.getProperty(s"${_input_prefix}${index}.path")
           val timestamp = properties.getProperty(s"${_input_prefix}${index}.timestamp")
           path -> timestamp.toLong
@@ -1512,6 +1488,7 @@ private[cozy] object CozyGenerationState {
             packagePrefix = properties.getProperty("packagePrefix", ""),
             generateDerivedAggregates = properties.getProperty("generateDerivedAggregates", "true").toBoolean,
             generateDerivedViews = properties.getProperty("generateDerivedViews", "true").toBoolean,
+            settings = settings,
             files = files
           )
         )
@@ -1905,18 +1882,6 @@ ${body}
   }
 }
 
-private[cozy] final case class CozyDependencyVersions(
-  cncfVersion: String,
-  simpleModelingModelVersion: String,
-  cncfCollaboratorApiVersion: String
-) {
-  def toSettings: Map[String, String] = Map(
-    "cncfVersion" -> cncfVersion,
-    "simpleModelingModelVersion" -> simpleModelingModelVersion,
-    "cncfCollaboratorApiVersion" -> cncfCollaboratorApiVersion
-  )
-}
-
 private[cozy] object CozyDelegatedGenerator {
   private val _manifest_relative_path = "sbt-cozy/generated-files.txt"
   private val _source_marker = "/src_managed/main/scala/"
@@ -1932,7 +1897,7 @@ private[cozy] object CozyDelegatedGenerator {
     basedir: File,
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
-    dependencyversions: CozyDependencyVersions,
+    settings: Map[String, String],
     log: Logger
   ): Seq[File] = {
     val workdir = targetbasedir / "sbt-cozy" / "delegate-work"
@@ -1953,7 +1918,7 @@ private[cozy] object CozyDelegatedGenerator {
           basedir = basedir,
           delegateprojectdir = delegateprojectdir,
           delegatecommand = delegatecommand,
-          dependencyversions = dependencyversions,
+          settings = settings,
           log = log
         )
     }
@@ -1983,7 +1948,7 @@ private[cozy] object CozyDelegatedGenerator {
     basedir: File,
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
-    dependencyversions: CozyDependencyVersions,
+    settings: Map[String, String],
     log: Logger
   ): Seq[File] = {
     val savedir = workdir / s"run-${runIndex}"
@@ -1994,7 +1959,7 @@ private[cozy] object CozyDelegatedGenerator {
       delegatecommand = delegatecommand,
       source = source,
       savedir = savedir,
-      settings = dependencyversions.toSettings
+      settings = settings
     )
     val command = delegate.command
 
@@ -2204,7 +2169,7 @@ private[cozy] object CozySbtBridge {
         savedir.getAbsolutePath
       )
     )
-    _resolve(basedir, explicitProjectDir, delegatecommand, request.copy(settings = settings))
+    _resolve(basedir, explicitProjectDir, delegatecommand, request.copy(settings = _project_settings(basedir, settings)))
   }
 
   def packageCar(
@@ -2552,6 +2517,9 @@ private[cozy] object CozySbtBridge {
   private def _request(action: String, arguments: Vector[String]): BridgeRequest =
     BridgeRequest(action, arguments)
 
+  private def _project_settings(basedir: File, settings: Map[String, String]): Map[String, String] =
+    settings + ("sbt.project_dir" -> basedir.getAbsoluteFile.toPath.normalize.toString)
+
   private def _write_request_file(request: BridgeRequest): File = {
     val path = Files.createTempFile("sbt-cozy-bridge-", ".json")
     Files.write(path, _render_request_json(request).getBytes(StandardCharsets.UTF_8))
@@ -2586,223 +2554,6 @@ private[cozy] object CozySbtBridge {
   private def _map_arg(name: String, values: Map[String, String]): Vector[String] =
     if (values.isEmpty) Vector.empty
     else Vector(s"--${name}", _json_map(values))
-}
-
-private[cozy] object CozyAppScaffold {
-  val CurrentPluginVersion = "0.1.5-SNAPSHOT"
-
-  final case class Spec(
-    appName: String,
-    rootDir: File,
-    organization: String,
-    version: String,
-    scalaVersion: String,
-    sbtVersion: String,
-    pluginVersion: String,
-    cncfVersion: String,
-    simpleModelingModelVersion: String,
-    cncfCollaboratorApiVersion: String
-  )
-
-  def generate(spec: Spec): Seq[File] = {
-    val root = spec.rootDir.getAbsoluteFile
-    if (root.exists() && root.listFiles().toVector.nonEmpty)
-      sys.error(s"[sbt-cozy] cozyAppRootDir is not empty: ${root.getAbsolutePath}")
-    IO.createDirectory(root)
-
-    val generated = Vector(
-      _write(root / "README.md", _root_readme(spec)),
-      _write(root / "build.sbt", _root_build(spec)),
-      _write(root / "project" / "build.properties", s"sbt.version=${spec.sbtVersion}\n"),
-      _write(root / "project" / "plugins.sbt", _plugins_sbt(spec)),
-      _write(root / "component" / "src" / "main" / "cozy" / s"${spec.appName}.cml", _component_cml(spec)),
-      _write(root / "component" / "src" / "main" / "resources" / ".keep", ""),
-      _write(root / "component" / "src" / "main" / "web" / ".keep", ""),
-      _write(root / "component" / "src" / "test" / "scala" / ".keep", ""),
-      _write(root / "subsystem" / "subsystem-descriptor.yaml", _subsystem_descriptor(spec)),
-      _write(root / "subsystem" / "src" / "main" / "resources" / ".keep", ""),
-      _write(root / "subsystem" / "src" / "test" / "scala" / ".keep", ""),
-      _write(root / "subsystem" / "scripts" / "README.md", _scripts_readme(spec))
-    )
-
-    generated
-  }
-
-  private def _write(path: File, content: String): File = {
-    IO.createDirectory(path.getParentFile)
-    IO.write(path, content)
-    path
-  }
-
-  private def _normalized_package_name(appname: String): String =
-    appname.toLowerCase.replace('-', '.')
-
-  private def _root_readme(spec: Spec): String =
-    s"""# ${spec.appName}
-|
-|Generated Cozy application scaffold.
-|
-|Layout:
-|- `component/`: application CAR source, Cozy model, web assets, component tests
-|- `subsystem/`: subsystem descriptor, provider wiring, local subsystem scripts
-|
-|Common commands:
-|- `sbt compile`
-|- `sbt component/cozyGenerate`
-|- `sbt component/cozyBuildCar`
-|- `sbt subsystem/cozyBuildSar`
-|
-|Next expected edits:
-|1. model the application under `component/src/main/cozy/`
-|2. add UI assets under `component/src/main/web/`
-|3. bind external components in `subsystem/subsystem-descriptor.yaml`
-|""".stripMargin
-
-  private def _root_build(spec: Spec): String = {
-    val apppkg = _normalized_package_name(spec.appName)
-    s"""import org.goldenport.cozy.CozyPlugin.autoImport._
-|import sbt.Keys.*
-|
-|val scala3Version = ${_scala_string(spec.scalaVersion)}
-|
-|def sampleVersion(envName: String, fileName: String, fallback: String): String =
-|  sys.env.get(envName)
-|    .orElse {
-|      sys.env.get("TEXTUS_SAMPLES_ROOT")
-|        .orElse(sys.env.get("CNCF_SAMPLES_ROOT"))
-|        .flatMap { root =>
-|          val versionFile = file(root) / "versions" / fileName
-|          if (versionFile.isFile)
-|            Some(IO.read(versionFile).trim).filter(_.nonEmpty)
-|          else
-|            None
-|        }
-|    }
-|    .getOrElse(fallback)
-|
-|val cncfVersion = sampleVersion("CNCF_VERSION", "cncf-version.conf", ${_scala_string(spec.cncfVersion)})
-|val simpleModelingModelVersion = sampleVersion("SIMPLEMODELING_MODEL_VERSION", "simplemodeling-model-version.conf", ${_scala_string(spec.simpleModelingModelVersion)})
-|val cncfCollaboratorApiVersion = sampleVersion("CNCF_COLLABORATOR_API_VERSION", "cncf-collaborator-api-version.conf", ${_scala_string(spec.cncfCollaboratorApiVersion)})
-|
-|lazy val commonSettings = Seq(
-|  organization := ${_scala_string(spec.organization)},
-|  version := ${_scala_string(spec.version)},
-|  scalaVersion := scala3Version,
-|  resolvers += Resolver.defaultLocal,
-|  resolvers += Resolver.file("Local Ivy", file(Path.userHome.absolutePath + "/.ivy2/local"))(Resolver.ivyStylePatterns),
-|  resolvers += "Local Maven Repository" at ("file://" + Path.userHome.absolutePath + "/.m2/repository"),
-|  resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/repository/maven"
-|)
-|
-|lazy val root = project
-|  .in(file("."))
-|  .aggregate(component, subsystem)
-|  .settings(commonSettings)
-|  .settings(
-|    name := ${_scala_string(spec.appName)},
-|    publish / skip := true
-|  )
-|
-|lazy val component = project
-|  .in(file("component"))
-|  .enablePlugins(org.goldenport.cozy.CozyPlugin)
-|  .settings(commonSettings)
-|  .settings(
-|    name := ${_scala_string(spec.appName + "-component")},
-|    cozyGeneratorBackend := "cozy",
-|    cozyManifestMetadata ++= Map(
-|      "component" -> ${_scala_string(spec.appName)},
-|      "boundedContext" -> "default",
-|      "domain" -> ${_scala_string(spec.appName)}
-|    ),
-|    libraryDependencies ++= Seq(
-|      "org.goldenport" %% "goldenport-cncf" % cncfVersion,
-|      "org.simplemodeling" %% "simplemodeling-model" % simpleModelingModelVersion,
-|      "org.goldenport" % "cncf-collaborator-api" % cncfCollaboratorApiVersion,
-|      "org.scalatest" %% "scalatest" % "3.2.19" % Test
-|    ),
-|    Test / fork := false
-|  )
-|
-|lazy val subsystem = project
-|  .in(file("subsystem"))
-|  .enablePlugins(org.goldenport.cozy.CozyPlugin)
-|  .settings(commonSettings)
-|  .settings(
-|    name := ${_scala_string(spec.appName + "-subsystem")},
-|    cozyPackaging := "sar",
-|    cozySourceDir := baseDirectory.value,
-|    libraryDependencies ++= Seq(
-|      "org.goldenport" %% "goldenport-cncf" % cncfVersion,
-|      "org.scalatest" %% "scalatest" % "3.2.19" % Test
-|    ),
-|    Test / fork := false
-|  )
-|
-|addCommandAlias("cozyBuildAppCar", "component/cozyBuildCar")
-|addCommandAlias("cozyBuildAppSar", "subsystem/cozyBuildSar")
-|addCommandAlias("cozyBuildAppCAR", "component/cozyBuildCar")
-|addCommandAlias("cozyBuildAppSAR", "subsystem/cozyBuildSar")
-|addCommandAlias("cozyGenerateApp", "component/cozyGenerate")
-|""".stripMargin
-  }
-
-  private def _plugins_sbt(spec: Spec): String =
-    s"""resolvers += Resolver.defaultLocal
-|addSbtPlugin("org.goldenport" % "sbt-cozy" % ${_scala_string(spec.pluginVersion)})
-|""".stripMargin
-
-  private def _component_cml(spec: Spec): String = {
-    val apppkg = _normalized_package_name(spec.appName)
-    s"""package sample.${apppkg}
-|entity Post
-|command CreatePost
-|query GetPost
-|query SearchPosts
-|operation post-post command CreatePost
-|operation get-post query GetPost
-|operation search-posts query SearchPosts
-|""".stripMargin
-  }
-
-  private def _subsystem_descriptor(spec: Spec): String =
-    s"""subsystem: ${spec.appName}
-|version: ${spec.version}
-|components:
-|  - component: ${spec.appName}
-|    coordinate: ${spec.organization}:${spec.appName}-component:${spec.version}
-|#  - component: textus-user-account
-|#    coordinate: org.textus:textus-user-account:0.1.0-SNAPSHOT
-|#security:
-|#  authentication:
-|#    convention: enabled
-|#    fallback_privilege: disabled
-|#    providers:
-|#      - name: user-account
-|#        component: textus-user-account
-|#        kind: human
-|#        enabled: true
-|#        priority: 100
-|#        schemes:
-|#          - bearer
-|#        default: true
-|""".stripMargin
-
-  private def _scripts_readme(spec: Spec): String =
-    s"""# subsystem/scripts
-|
-|Place local subsystem run helpers here.
-|
-|Typical workflow:
-|- `sbt compile`
-|- `sbt component/cozyBuildCar`
-|- `sbt subsystem/cozyBuildSar`
-|
-|For ${spec.appName}, external providers such as `textus-user-account` are expected to be bound in `../subsystem-descriptor.yaml` by coordinate, not copied into this project tree.
-|""".stripMargin
-
-  private def _scala_string(value: String): String =
-    '"' + value.replace("\\", "\\\\").replace("\"", "\\\"") + '"'
 }
 
 private[cozy] object CozyPackaging {

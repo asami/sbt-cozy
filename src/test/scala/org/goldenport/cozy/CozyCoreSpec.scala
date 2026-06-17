@@ -14,7 +14,7 @@ import sbt._
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
  *  version May. 26, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 18, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -871,18 +871,51 @@ final class CozyDelegatedGeneratorSpec extends CozyTestBase {
   test("bridge uses direct cozy command by default") {
     withTempDir("sbt-cozy-delegate") { dir =>
       val source = write(dir / "src" / "model.cml", "package app\nentity User\n")
-      val saveDir = dir / "out"
+      val savedir = dir / "out"
       val (cwd, resolved) = CozySbtBridge.resolveForTest(
         basedir = dir,
         delegateprojectdir = None,
         delegatecommand = Seq("cozy"),
         action = "generate",
-        arguments = Vector("modeler-scala", source.getAbsolutePath, "--save", saveDir.getAbsolutePath)
+        arguments = Vector("modeler-scala", source.getAbsolutePath, "--save", savedir.getAbsolutePath)
       )
       assert(cwd.getAbsolutePath == dir.getAbsolutePath)
       assert(resolved.head == "cozy")
       assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
       assertBridgeRequestArgument(resolved)
+    }
+  }
+
+  test("bridge request keeps explicit generation version override settings") {
+    val json = CozySbtBridge.renderRequestJsonForTest(
+      action = "generate",
+      arguments = Vector("modeler-scala", "/tmp/model.cml", "--save", "/tmp/out"),
+      settings = Map("generation.versions.cncf" -> "0.4.11")
+    )
+
+    assert(json.contains(""""settings": {"generation.versions.cncf": "0.4.11"}"""))
+  }
+
+  test("generate bridge request includes sbt project directory with explicit overrides") {
+    withTempDir("sbt-cozy-delegate") { dir =>
+      val source = write(dir / "src" / "model.cml", "package app\nentity User\n")
+      val savedir = dir / "out"
+      val execution = CozySbtBridge.resolveGenerate(
+        basedir = dir,
+        explicitProjectDir = None,
+        delegatecommand = Seq("cozy"),
+        source = source,
+        savedir = savedir,
+        settings = Map(
+          "generation.versions.cncf" -> "0.4.11",
+          "sbt.project_dir" -> "/tmp/wrong-project"
+        )
+      )
+      val json = IO.read(file(execution.command.last))
+
+      assert(json.contains(""""generation.versions.cncf": "0.4.11""""))
+      assert(json.contains(s""""sbt.project_dir": "${dir.getAbsoluteFile.toPath.normalize.toString}""""))
+      assert(!json.contains("/tmp/wrong-project"))
     }
   }
 

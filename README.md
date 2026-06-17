@@ -34,6 +34,16 @@
 
 `cozyConfig` is only used by the `legacy` backend. The `cozy` backend follows the generator behavior defined on the `cozy` side.
 
+Use `cozyGenerationVersionOverrides` only when `build.sbt` must explicitly
+override Cozy generation dependency versions. Keys use the same full paths as
+Cozy config:
+
+```scala
+cozyGenerationVersionOverrides ++= Map(
+  "generation.versions.cncf" -> "0.4.11"
+)
+```
+
 When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML paths, timestamps, backend, and generation settings in `target/sbt-cozy/generation-state.properties`. If nothing has changed, existing generated Scala sources are reused.
 
 ### Packaging
@@ -116,7 +126,7 @@ are not packaged into CAR artifacts.
 resolvers += Resolver.defaultLocal
 resolvers += Resolver.mavenLocal
 
-addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.5-SNAPSHOT")
+addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.10-SNAPSHOT")
 ```
 
 `build.sbt`:
@@ -191,7 +201,7 @@ Generate BoK artifact/release metadata from the warehouse:
 sbt cozyIndexWarehouse
 ```
 
-Project-local defaults can be written in `.cozy/config.yaml`. sbt-cozy reads only sbt-adapter settings there, such as generation, publication, distribution, and warehouse settings. CAR packaging and publish policy such as `packaging.car.source_dir`, `packaging.car.include_dependencies`, dependencies, manifest metadata, and catalog updates are interpreted by cozy itself when sbt-cozy calls `cozy package-car --project-dir` and `cozy publish-car`.
+Project-local defaults can be written in `.cozy/config.yaml`. sbt-cozy reads only sbt-adapter settings there, such as source directories, backend selection, publication, distribution, and warehouse settings. Cozy-owned settings such as `generation.versions.*`, CAR packaging policy, dependencies, manifest metadata, runtime compatibility, and catalog updates are interpreted by Cozy itself when sbt-cozy calls the Cozy bridge.
 
 ```yaml
 generation:
@@ -241,6 +251,12 @@ local:
 `.cozy/config.yaml` controls generation and publish operation defaults.
 `.cncf/config.yaml` controls runtime lookup and development startup.
 `project.yaml` describes artifact metadata and runtime compatibility.
+Scaffold generation is provided by Cozy directly:
+
+```bash
+cozy init component --save my-component
+cozy car-sbt-project model.cml --save my-component
+```
 
 Example settings:
 
