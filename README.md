@@ -10,6 +10,7 @@
 - Use descriptor-first CAR/SAR packaging
 - Publish Car/Sar artifacts and catalogs into a warehouse with `cozyPublishCar` and `cozyPublishSar`
 - Publish dependency components into the local CNCF repository with `cozyPublishLocalCar` and `cozyPublishLocalSar`
+- Wire standard `sbt publish` and `sbt publishLocal` to the configured CAR/SAR publication tasks by default
 - Distribute release CAR/SAR artifacts and sample ZIP downloads with explicit `cozyDistribute*` tasks
 - Index warehouse artifacts into `publish.d` metadata with `cozyIndexWarehouse`
 
@@ -63,6 +64,7 @@ When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML p
 - `cozyWarehouseRepositoryArtifacts`: repository artifact types indexed from warehouse, such as `car` and `sar`
 - `cozyWarehouseRepositoryModules`: repository artifact module names indexed from warehouse
 - `cozyPublicationPath`: publication site path. `.cozy/config.yaml` `publication.path` wins; `project.yaml` `project.path` is the fallback.
+- `cozyWireStandardPublishTasks`: when true, `publish` and `publishLocal` are routed to the configured CAR/SAR publication tasks (default: `true`)
 
 Tasks:
 
@@ -72,6 +74,8 @@ Tasks:
 - `cozyPublishSar`: publish the Sar archive and catalog through Cozy into `warehouse/repository`
 - `cozyPublishLocalCar`: publish the Car archive and catalog through Cozy into `~/.cncf/local/repository/car`
 - `cozyPublishLocalSar`: publish the Sar archive and catalog through Cozy into `~/.cncf/local/repository/sar`
+- `publish`: routed to `cozyPublishCar` or `cozyPublishSar` according to `cozyPackaging`
+- `publishLocal`: routed to `cozyPublishLocalCar` or `cozyPublishLocalSar` according to `cozyPackaging`
 - `cozyDistributeCar`: copy the Car built by `cozyBuildCar` into `warehouse/repository/car`
 - `cozyDistributeSar`: copy the Sar built by `cozyBuildSar` into `warehouse/repository/sar`
 - uppercase `CAR` / `SAR` task names remain compatibility aliases

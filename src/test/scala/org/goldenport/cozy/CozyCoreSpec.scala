@@ -14,7 +14,8 @@ import sbt._
  *  version Apr.  4, 2026
  *  version Apr. 23, 2026
  *  version May. 26, 2026
- * @version Jun. 18, 2026
+ *  version Jun. 18, 2026
+ * @version Jul.  1, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -43,6 +44,23 @@ abstract class CozyTestBase extends AnyFunSuite {
 }
 
 final class CozyPublishVersionPolicySpec extends CozyTestBase {
+  test("standard publish task labels follow configured packaging kind") {
+    assert(CozyPlugin.publishTaskLabel("car", local = false) == "cozyPublishCar")
+    assert(CozyPlugin.publishTaskLabel("car", local = true) == "cozyPublishLocalCar")
+    assert(CozyPlugin.publishTaskLabel("sar", local = false) == "cozyPublishSar")
+    assert(CozyPlugin.publishTaskLabel("sar", local = true) == "cozyPublishLocalSar")
+  }
+
+  test("standard publish task labels reject unknown packaging kind") {
+    val error = intercept[RuntimeException] {
+      CozyPlugin.publishTaskLabel("jar", local = false)
+    }
+
+    assert(error.getMessage.contains("invalid cozyPackaging"))
+    assert(error.getMessage.contains("car"))
+    assert(error.getMessage.contains("sar"))
+  }
+
   test("release publish tasks accept release versions") {
     CozyPlugin.validatePublishVersion("0.1.2", "cozyPublishCar", expectsnapshot = false)
     CozyPlugin.validatePublishVersion("0.1.2", "cozyPublishSar", expectsnapshot = false)

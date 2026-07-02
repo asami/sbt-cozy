@@ -17,7 +17,8 @@ import scala.sys.process._
  *  version Apr.  4, 2026
  *  version Apr. 25, 2026
  *  version May. 26, 2026
- * @version Jun. 18, 2026
+ *  version Jun. 18, 2026
+ * @version Jul.  1, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -117,6 +118,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare runtime classpath file.")
 
     val cozyPackaging = settingKey[String]("Default packaging target. Either 'car' or 'sar'.")
+    val cozyWireStandardPublishTasks = settingKey[Boolean]("Wire sbt publish/publishLocal to cozy CAR/SAR publication tasks.")
     val cozyCarName = settingKey[String]("Base file name of the generated CAR archive")
     val cozySarName = settingKey[String]("Base file name of the generated SAR archive")
     val cozySpiJars = settingKey[Seq[File]]("Additional SPI jars to include under CAR /spi")
@@ -188,6 +190,7 @@ object CozyPlugin extends AutoPlugin {
     cozyWebDescriptorSync := cozyProjectConfig.value.boolean("generation.web_descriptor_sync").getOrElse(true),
 
     cozyPackaging := cozyProjectConfig.value.value("packaging.kind").getOrElse("car"),
+    cozyWireStandardPublishTasks := cozyProjectConfig.value.boolean("packaging.wire_standard_publish_tasks").getOrElse(true),
     cozyCarName := s"${moduleName.value}-${version.value}",
     cozySarName := s"${moduleName.value}-${version.value}",
     cozySpiJars := Seq.empty,
@@ -363,91 +366,119 @@ object CozyPlugin extends AutoPlugin {
 
     cozyBuildSAR := cozyBuildSar.value,
 
-    cozyPublishCar := {
+    cozyPublishCar := Def.taskDyn {
       validatePublishVersion(version.value, "cozyPublishCar", expectsnapshot = false)
-      val archive = cozyBuildCar.value
-      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
-      val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", artifactname, version.value)
-      CozySbtBridge.publishCar(
-        projectdir = baseDirectory.value,
-        warehousedir = cozyWarehouseDir.value,
-        name = artifactname,
-        version = version.value,
-        archive = archive,
-        basedir = baseDirectory.value,
-        delegateprojectdir = cozyDelegateProjectDir.value,
-        delegatecommand = cozyDelegateCommand.value,
-        log = streams.value.log
-      )
-      streams.value.log.info(s"[sbt-cozy] published Car to ${destination.getAbsolutePath}")
-      destination
-    },
+      Def.task {
+        val archive = cozyBuildCar.value
+        val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+        val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", artifactname, version.value)
+        CozySbtBridge.publishCar(
+          projectdir = baseDirectory.value,
+          warehousedir = cozyWarehouseDir.value,
+          name = artifactname,
+          version = version.value,
+          archive = archive,
+          basedir = baseDirectory.value,
+          delegateprojectdir = cozyDelegateProjectDir.value,
+          delegatecommand = cozyDelegateCommand.value,
+          log = streams.value.log
+        )
+        streams.value.log.info(s"[sbt-cozy] published Car to ${destination.getAbsolutePath}")
+        destination
+      }
+    }.value,
 
     cozyPublishCAR := cozyPublishCar.value,
 
-    cozyPublishSar := {
+    cozyPublishSar := Def.taskDyn {
       validatePublishVersion(version.value, "cozyPublishSar", expectsnapshot = false)
-      val archive = cozyBuildSar.value
-      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
-      val destination = _repository_artifact_destination(cozyWarehouseDir.value, "sar", artifactname, version.value)
-      CozySbtBridge.publishSar(
-        projectdir = baseDirectory.value,
-        warehousedir = cozyWarehouseDir.value,
-        name = artifactname,
-        version = version.value,
-        archive = archive,
-        basedir = baseDirectory.value,
-        delegateprojectdir = cozyDelegateProjectDir.value,
-        delegatecommand = cozyDelegateCommand.value,
-        log = streams.value.log
-      )
-      streams.value.log.info(s"[sbt-cozy] published Sar to ${destination.getAbsolutePath}")
-      destination
-    },
+      Def.task {
+        val archive = cozyBuildSar.value
+        val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+        val destination = _repository_artifact_destination(cozyWarehouseDir.value, "sar", artifactname, version.value)
+        CozySbtBridge.publishSar(
+          projectdir = baseDirectory.value,
+          warehousedir = cozyWarehouseDir.value,
+          name = artifactname,
+          version = version.value,
+          archive = archive,
+          basedir = baseDirectory.value,
+          delegateprojectdir = cozyDelegateProjectDir.value,
+          delegatecommand = cozyDelegateCommand.value,
+          log = streams.value.log
+        )
+        streams.value.log.info(s"[sbt-cozy] published Sar to ${destination.getAbsolutePath}")
+        destination
+      }
+    }.value,
 
     cozyPublishSAR := cozyPublishSar.value,
 
-    cozyPublishLocalCar := {
+    cozyPublishLocalCar := Def.taskDyn {
       validatePublishVersion(version.value, "cozyPublishLocalCar", expectsnapshot = true)
-      val archive = cozyBuildCar.value
-      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
-      val localwarehouse = cozyLocalWarehouseDir.value
-      val destination = _repository_artifact_destination(localwarehouse, "car", artifactname, version.value)
-      CozySbtBridge.publishCar(
-        projectdir = baseDirectory.value,
-        warehousedir = localwarehouse,
-        name = artifactname,
-        version = version.value,
-        archive = archive,
-        basedir = baseDirectory.value,
-        delegateprojectdir = cozyDelegateProjectDir.value,
-        delegatecommand = cozyDelegateCommand.value,
-        log = streams.value.log
-      )
-      streams.value.log.info(s"[sbt-cozy] published local Car to ${destination.getAbsolutePath}")
-      destination
-    },
+      Def.task {
+        val archive = cozyBuildCar.value
+        val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+        val localwarehouse = cozyLocalWarehouseDir.value
+        val destination = _repository_artifact_destination(localwarehouse, "car", artifactname, version.value)
+        CozySbtBridge.publishCar(
+          projectdir = baseDirectory.value,
+          warehousedir = localwarehouse,
+          name = artifactname,
+          version = version.value,
+          archive = archive,
+          basedir = baseDirectory.value,
+          delegateprojectdir = cozyDelegateProjectDir.value,
+          delegatecommand = cozyDelegateCommand.value,
+          log = streams.value.log
+        )
+        streams.value.log.info(s"[sbt-cozy] published local Car to ${destination.getAbsolutePath}")
+        destination
+      }
+    }.value,
 
-    cozyPublishLocalSar := {
+    cozyPublishLocalSar := Def.taskDyn {
       validatePublishVersion(version.value, "cozyPublishLocalSar", expectsnapshot = true)
-      val archive = cozyBuildSar.value
-      val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
-      val localwarehouse = cozyLocalWarehouseDir.value
-      val destination = _repository_artifact_destination(localwarehouse, "sar", artifactname, version.value)
-      CozySbtBridge.publishSar(
-        projectdir = baseDirectory.value,
-        warehousedir = localwarehouse,
-        name = artifactname,
-        version = version.value,
-        archive = archive,
-        basedir = baseDirectory.value,
-        delegateprojectdir = cozyDelegateProjectDir.value,
-        delegatecommand = cozyDelegateCommand.value,
-        log = streams.value.log
-      )
-      streams.value.log.info(s"[sbt-cozy] published local Sar to ${destination.getAbsolutePath}")
-      destination
-    },
+      Def.task {
+        val archive = cozyBuildSar.value
+        val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
+        val localwarehouse = cozyLocalWarehouseDir.value
+        val destination = _repository_artifact_destination(localwarehouse, "sar", artifactname, version.value)
+        CozySbtBridge.publishSar(
+          projectdir = baseDirectory.value,
+          warehousedir = localwarehouse,
+          name = artifactname,
+          version = version.value,
+          archive = archive,
+          basedir = baseDirectory.value,
+          delegateprojectdir = cozyDelegateProjectDir.value,
+          delegatecommand = cozyDelegateCommand.value,
+          log = streams.value.log
+        )
+        streams.value.log.info(s"[sbt-cozy] published local Sar to ${destination.getAbsolutePath}")
+        destination
+      }
+    }.value,
+
+    publish := Def.taskDyn {
+      if (!cozyWireStandardPublishTasks.value) {
+        sys.error("[sbt-cozy] standard sbt publish is disabled by cozyWireStandardPublishTasks=false; define publish explicitly or use cozyPublishCar/cozyPublishSar")
+      }
+      publishTaskLabel(cozyPackaging.value, local = false) match {
+        case "cozyPublishCar" => Def.task { val _ = cozyPublishCar.value; () }
+        case "cozyPublishSar" => Def.task { val _ = cozyPublishSar.value; () }
+      }
+    }.value,
+
+    publishLocal := Def.taskDyn {
+      if (!cozyWireStandardPublishTasks.value) {
+        sys.error("[sbt-cozy] standard sbt publishLocal is disabled by cozyWireStandardPublishTasks=false; define publishLocal explicitly or use cozyPublishLocalCar/cozyPublishLocalSar")
+      }
+      publishTaskLabel(cozyPackaging.value, local = true) match {
+        case "cozyPublishLocalCar" => Def.task { val _ = cozyPublishLocalCar.value; () }
+        case "cozyPublishLocalSar" => Def.task { val _ = cozyPublishLocalSar.value; () }
+      }
+    }.value,
 
     cozyDistributeCar := {
       _validate_release_distribution(version.value, cozyDistributionRequireReleaseVersion.value)
@@ -619,6 +650,13 @@ object CozyPlugin extends AutoPlugin {
 
   private[cozy] def isSnapshotVersion(version: String): Boolean =
     version.toUpperCase(java.util.Locale.ROOT).contains("SNAPSHOT")
+
+  private[cozy] def publishTaskLabel(packaging: String, local: Boolean): String =
+    packaging.trim.toLowerCase match {
+      case "car" => if (local) "cozyPublishLocalCar" else "cozyPublishCar"
+      case "sar" => if (local) "cozyPublishLocalSar" else "cozyPublishSar"
+      case other => sys.error(s"[sbt-cozy] invalid cozyPackaging '${other}'. expected 'car' or 'sar'")
+    }
 
   private[cozy] def publicationPath(config: CozyProjectConfig, projectmetadata: CozyProjectConfig): Option[String] =
     config.value("publication.path").orElse(projectmetadata.value("project.path"))
