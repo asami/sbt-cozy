@@ -127,10 +127,9 @@ are not packaged into CAR artifacts.
 `project/plugins.sbt`:
 
 ```scala
-resolvers += Resolver.defaultLocal
-resolvers += Resolver.mavenLocal
+resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/repository/maven"
 
-addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.10-SNAPSHOT")
+addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.11")
 ```
 
 `build.sbt`:
