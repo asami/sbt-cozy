@@ -15,7 +15,7 @@ import sbt._
  *  version Apr. 23, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul.  1, 2026
+ * @version Jul.  8, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -1007,19 +1007,46 @@ final class CozyManifestMetadataSpec extends CozyTestBase {
       "componentlet.notice-admin.kind" -> "componentlet"
     )
 
-    val result = CozyManifestMetadata.from(metadata, "sample")
+    val result = CozyManifestMetadata.from(metadata, "sample", "0.1.0")
 
     assert(result.component == "sample-component")
     assert(result.config.isEmpty)
     assert(result.extensions.get("boundedContext").contains("default"))
     assert(result.extensions.get("componentlets").isEmpty)
     val descriptor = result.extensions.getOrElse("componentDescriptorJson", fail("missing descriptor JSON"))
-    assert(descriptor.contains("\"component\":{\"name\":\"sample-component\",\"boundedContext\":\"default\"}"))
+    assert(descriptor.contains("\"component\":{\"name\":\"sample-component\",\"version\":\"0.1.0\",\"boundedContext\":\"default\"}"))
     assert(descriptor.contains("\"componentlets\":["))
     assert(descriptor.contains("\"name\":\"notice-admin\""))
     assert(descriptor.contains("\"name\":\"public-notice\""))
     assert(descriptor.contains("\"kind\":\"componentlet\""))
     assert(descriptor.contains("\"isPrimary\":\"false\""))
+  }
+
+  test("component descriptor metadata includes the build version") {
+    val metadata = CozyManifestMetadata.from(
+      Map("component" -> "textus-ai-runtime"),
+      defaultcomponent = "default-component",
+      version = "0.2.0-SNAPSHOT"
+    )
+
+    val descriptor = metadata.extensions("componentDescriptorJson")
+    assert(descriptor.contains("\"name\":\"textus-ai-runtime\""))
+    assert(descriptor.contains("\"version\":\"0.2.0-SNAPSHOT\""))
+  }
+
+  test("component descriptor metadata does not accept version override from passthrough metadata") {
+    val metadata = CozyManifestMetadata.from(
+      Map(
+        "component" -> "textus-ai-runtime",
+        "version" -> "0.1.0"
+      ),
+      defaultcomponent = "default-component",
+      version = "0.2.0-SNAPSHOT"
+    )
+
+    val descriptor = metadata.extensions("componentDescriptorJson")
+    assert(descriptor.contains("\"version\":\"0.2.0-SNAPSHOT\""))
+    assert(!descriptor.contains("\"version\":\"0.1.0\""))
   }
 }
 

@@ -18,7 +18,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul.  1, 2026
+ * @version Jul.  8, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -309,14 +309,14 @@ object CozyPlugin extends AutoPlugin {
         .filter(file => file.isFile && file.getName.endsWith(".jar"))
         .distinct
         .sortBy(_.getName)
-      val packagingMetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value)
+      val packagingMetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value, version.value)
       CozySbtBridge.packageCar(
         archive = archive,
         mainJar = mainJar,
         libJars = libJars,
         spiJars = spiJars,
         projectDir = baseDirectory.value,
-        name = cozyCarName.value,
+        name = moduleName.value,
         version = version.value,
         component = packagingMetadata.component,
         extensions = packagingMetadata.extensions,
@@ -2087,13 +2087,13 @@ private[cozy] object CozyManifestMetadata {
   private val _componentlet_prefix = "componentlet."
   private val _descriptor_json_key = "componentDescriptorJson"
 
-  def from(metadata: Map[String, String], defaultcomponent: String): CozyPackageMetadata = {
+  def from(metadata: Map[String, String], defaultcomponent: String, version: String): CozyPackageMetadata = {
     val component = metadata.getOrElse(_component_key, defaultcomponent)
     val componentletnames = _componentlet_names(metadata)
     val reservedkeys = Set(_component_key, _componentlets_key) ++
       metadata.keySet.filter(_.startsWith(_componentlet_prefix))
     val passthroughextensions = metadata -- reservedkeys
-    val descriptorjson = _descriptor_json(component, passthroughextensions, componentletnames, metadata)
+    val descriptorjson = _descriptor_json(component, version, passthroughextensions, componentletnames, metadata)
     CozyPackageMetadata(
       component = component,
       extensions = passthroughextensions + (_descriptor_json_key -> descriptorjson),
@@ -2121,6 +2121,7 @@ private[cozy] object CozyManifestMetadata {
 
   private def _descriptor_json(
     component: String,
+    version: String,
     rootmetadata: Map[String, String],
     componentletnames: Vector[String],
     metadata: Map[String, String]
@@ -2132,8 +2133,8 @@ private[cozy] object CozyManifestMetadata {
       }.toVector.sortBy(_._1)
       name -> fields
     }
-    val rootfields = rootmetadata.toVector.sortBy(_._1)
-    val componentjson = _json_fields(Vector(("name", component)) ++ rootfields)
+    val rootfields = rootmetadata.toVector.filterNot(_._1 == "version").sortBy(_._1)
+    val componentjson = _json_fields(Vector(("name", component), ("version", version)) ++ rootfields)
     val componentletsjson = componentlets.map { case (name, fields) =>
       _json_fields(Vector(("name", name)) ++ fields)
     }.mkString("[", ",", "]")
