@@ -15,7 +15,7 @@ import sbt._
  *  version Apr. 23, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul.  8, 2026
+ * @version Jul.  9, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -1014,7 +1014,10 @@ final class CozyManifestMetadataSpec extends CozyTestBase {
     assert(result.extensions.get("boundedContext").contains("default"))
     assert(result.extensions.get("componentlets").isEmpty)
     val descriptor = result.extensions.getOrElse("componentDescriptorJson", fail("missing descriptor JSON"))
-    assert(descriptor.contains("\"component\":{\"name\":\"sample-component\",\"version\":\"0.1.0\",\"boundedContext\":\"default\"}"))
+    assert(descriptor.contains("\"name\":\"sample\""))
+    assert(descriptor.contains("\"version\":\"0.1.0\""))
+    assert(descriptor.contains("\"component\":\"sample-component\""))
+    assert(descriptor.contains("\"boundedContext\":\"default\""))
     assert(descriptor.contains("\"componentlets\":["))
     assert(descriptor.contains("\"name\":\"notice-admin\""))
     assert(descriptor.contains("\"name\":\"public-notice\""))
@@ -1030,7 +1033,8 @@ final class CozyManifestMetadataSpec extends CozyTestBase {
     )
 
     val descriptor = metadata.extensions("componentDescriptorJson")
-    assert(descriptor.contains("\"name\":\"textus-ai-runtime\""))
+    assert(descriptor.contains("\"name\":\"default-component\""))
+    assert(descriptor.contains("\"component\":\"textus-ai-runtime\""))
     assert(descriptor.contains("\"version\":\"0.2.0-SNAPSHOT\""))
   }
 

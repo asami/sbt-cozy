@@ -18,7 +18,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul.  8, 2026
+ * @version Jul.  9, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -2093,7 +2093,7 @@ private[cozy] object CozyManifestMetadata {
     val reservedkeys = Set(_component_key, _componentlets_key) ++
       metadata.keySet.filter(_.startsWith(_componentlet_prefix))
     val passthroughextensions = metadata -- reservedkeys
-    val descriptorjson = _descriptor_json(component, version, passthroughextensions, componentletnames, metadata)
+    val descriptorjson = _descriptor_json(defaultcomponent, component, version, passthroughextensions, componentletnames, metadata)
     CozyPackageMetadata(
       component = component,
       extensions = passthroughextensions + (_descriptor_json_key -> descriptorjson),
@@ -2120,6 +2120,7 @@ private[cozy] object CozyManifestMetadata {
   }
 
   private def _descriptor_json(
+    carname: String,
     component: String,
     version: String,
     rootmetadata: Map[String, String],
@@ -2133,12 +2134,18 @@ private[cozy] object CozyManifestMetadata {
       }.toVector.sortBy(_._1)
       name -> fields
     }
-    val rootfields = rootmetadata.toVector.filterNot(_._1 == "version").sortBy(_._1)
-    val componentjson = _json_fields(Vector(("name", component), ("version", version)) ++ rootfields)
+    val rootfields = rootmetadata.toVector.filterNot { case (key, _) =>
+      key == "name" || key == "version" || key == "component"
+    }.sortBy(_._1)
+    val rootjson = _json_fields(Vector(
+      ("name", carname),
+      ("version", version),
+      ("component", component)
+    ) ++ rootfields)
     val componentletsjson = componentlets.map { case (name, fields) =>
       _json_fields(Vector(("name", name)) ++ fields)
     }.mkString("[", ",", "]")
-    s"""{"component":$componentjson,"componentlets":$componentletsjson}"""
+    s"""${rootjson.dropRight(1)},"componentlets":$componentletsjson}"""
   }
 
   private def _json_fields(fields: Vector[(String, String)]): String =
