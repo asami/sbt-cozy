@@ -2090,7 +2090,7 @@ private[cozy] object CozyManifestMetadata {
   def from(metadata: Map[String, String], defaultcomponent: String, version: String): CozyPackageMetadata = {
     val component = metadata.getOrElse(_component_key, defaultcomponent)
     val componentletnames = _componentlet_names(metadata)
-    val reservedkeys = Set(_component_key, _componentlets_key) ++
+    val reservedkeys = Set(_component_key, _componentlets_key, _descriptor_json_key) ++
       metadata.keySet.filter(_.startsWith(_componentlet_prefix))
     val passthroughextensions = metadata -- reservedkeys
     val descriptorjson = _descriptor_json(defaultcomponent, component, version, passthroughextensions, componentletnames, metadata)
