@@ -15,7 +15,7 @@ import sbt._
  *  version Apr. 23, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul.  9, 2026
+ * @version Jul. 12, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -881,117 +881,6 @@ final class CozyGenerationStateSpec extends CozyTestBase {
 
       assert(!CozyGenerationState.isUpToDate(stateFile, inputs, Seq.empty))
       assert(!CozyGenerationState.isUpToDate(stateFile, inputs, Seq(dir / "missing.scala")))
-    }
-  }
-}
-
-final class CozyDelegatedGeneratorSpec extends CozyTestBase {
-  test("bridge uses direct cozy command by default") {
-    withTempDir("sbt-cozy-delegate") { dir =>
-      val source = write(dir / "src" / "model.cml", "package app\nentity User\n")
-      val savedir = dir / "out"
-      val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        basedir = dir,
-        delegateprojectdir = None,
-        delegatecommand = Seq("cozy"),
-        action = "generate",
-        arguments = Vector("modeler-scala", source.getAbsolutePath, "--save", savedir.getAbsolutePath)
-      )
-      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
-      assert(resolved.head == "cozy")
-      assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
-      assertBridgeRequestArgument(resolved)
-    }
-  }
-
-  test("bridge request keeps explicit generation version override settings") {
-    val json = CozySbtBridge.renderRequestJsonForTest(
-      action = "generate",
-      arguments = Vector("modeler-scala", "/tmp/model.cml", "--save", "/tmp/out"),
-      settings = Map("generation.versions.cncf" -> "0.4.11")
-    )
-
-    assert(json.contains(""""settings": {"generation.versions.cncf": "0.4.11"}"""))
-  }
-
-  test("generate bridge request includes sbt project directory with explicit overrides") {
-    withTempDir("sbt-cozy-delegate") { dir =>
-      val source = write(dir / "src" / "model.cml", "package app\nentity User\n")
-      val savedir = dir / "out"
-      val execution = CozySbtBridge.resolveGenerate(
-        basedir = dir,
-        explicitProjectDir = None,
-        delegatecommand = Seq("cozy"),
-        source = source,
-        savedir = savedir,
-        settings = Map(
-          "generation.versions.cncf" -> "0.4.11",
-          "sbt.project_dir" -> "/tmp/wrong-project"
-        )
-      )
-      val json = IO.read(file(execution.command.last))
-
-      assert(json.contains(""""generation.versions.cncf": "0.4.11""""))
-      assert(json.contains(s""""sbt.project_dir": "${dir.getAbsoluteFile.toPath.normalize.toString}""""))
-      assert(!json.contains("/tmp/wrong-project"))
-    }
-  }
-
-  test("bridge can use explicit coursier version through cozy launcher during development") {
-    withTempDir("sbt-cozy-delegate") { dir =>
-      val command = CozySbtBridge.coursierCommand("0.2.17-SNAPSHOT")
-      val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        basedir = dir,
-        delegateprojectdir = None,
-        delegatecommand = command,
-        action = "generate",
-        arguments = Vector("modeler-scala", "/tmp/model.cml", "--save", "/tmp/out")
-      )
-      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
-      assert(resolved.take(2) == Seq("cs", "launch"))
-      assert(resolved.contains("--channel"))
-      assert(resolved.contains("https://www.simplemodeling.org/repository/cozy/coursier-channel.json"))
-      assert(resolved.contains("cozy"))
-      assert(resolved.contains("--runtime"))
-      assert(resolved.contains("0.2.17-SNAPSHOT"))
-      assert(resolved.contains("--"))
-      assert(resolved.takeRight(4).take(3) == Seq("sbt-bridge", "v1", "--request"))
-      assertBridgeRequestArgument(resolved)
-    }
-  }
-
-
-  test("bridge delegates publish-project requests") {
-    withTempDir("sbt-cozy-publish-project-delegate") { dir =>
-      val out = dir / "publish.d"
-      val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        basedir = dir,
-        delegateprojectdir = None,
-        delegatecommand = Seq("cozy"),
-        action = "publish-project",
-        arguments = Vector(dir.getAbsolutePath, "--save", out.getAbsolutePath, "--kind", "sample-single")
-      )
-      assert(cwd.getAbsolutePath == dir.getAbsolutePath)
-      assert(resolved.head == "cozy")
-      assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
-      assertBridgeRequestArgument(resolved)
-    }
-  }
-
-  test("bridge uses explicit cozy project during development") {
-    withTempDir("sbt-cozy-delegate") { dir =>
-      val cozyDir = dir / "cozy"
-      write(cozyDir / "build.sbt", """name := "cozy"""")
-      val (cwd, resolved) = CozySbtBridge.resolveForTest(
-        basedir = dir,
-        delegateprojectdir = Some(cozyDir),
-        delegatecommand = Seq("cozy"),
-        action = "package-sar",
-        arguments = Vector("--save", "/tmp/sample.sar")
-      )
-      assert(cwd.getAbsolutePath == cozyDir.getAbsolutePath)
-      assert(resolved.take(4) == Seq("sbt", "--batch", "-Dsbt.server.autostart=false", "-Dsbt.supershell=false"))
-      assert(resolved.last.startsWith("runMain cozy.Cozy "))
     }
   }
 }

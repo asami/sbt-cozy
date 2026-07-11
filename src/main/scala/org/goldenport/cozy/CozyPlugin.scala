@@ -18,7 +18,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul.  9, 2026
+ * @version Jul. 12, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -231,7 +231,10 @@ object CozyPlugin extends AutoPlugin {
       val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val delegateprojectdir = cozyDelegateProjectDir.value
       val delegatecommand = cozyDelegateCommand.value
-      val generationversionoverrides = cozyGenerationVersionOverrides.value
+      val generationversionoverrides = cozyGenerationVersionOverrides.value ++ Map(
+        "component.module" -> moduleName.value,
+        "component.version" -> version.value
+      )
       val skipUnchanged = cozySkipUnchangedGeneration.value
       val log = streams.value.log
 
@@ -1968,6 +1971,8 @@ private[cozy] object CozyDelegatedGenerator {
       .toVector
       .sortBy(_.getAbsolutePath)
 
+    _install_component_api_descriptor(workdir, targetbasedir)
+
     _write_generated_manifest(manifestfile, uniquegenerated)
 
     if (uniquegenerated.isEmpty) {
@@ -1976,6 +1981,22 @@ private[cozy] object CozyDelegatedGenerator {
 
     log.info(s"[sbt-cozy] generated ${uniquegenerated.size} Scala source(s) using cozy backend")
     uniquegenerated
+  }
+
+  private[cozy] def _install_component_api_descriptor(workdir: File, targetbasedir: File): Unit = {
+    val descriptors = (workdir ** "component-api-descriptor.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+    descriptors match {
+      case Seq() =>
+        val targetdescriptor = targetbasedir / "cozy" / "component-api-descriptor.json"
+        if (targetdescriptor.isFile)
+          IO.delete(targetdescriptor)
+      case Seq(descriptor) =>
+        val targetdescriptor = targetbasedir / "cozy" / "component-api-descriptor.json"
+        IO.createDirectory(targetdescriptor.getParentFile)
+        IO.copyFile(descriptor, targetdescriptor, preserveLastModified = true)
+      case _ =>
+        sys.error(s"[sbt-cozy] multiple component API descriptors were generated: ${descriptors.map(_.getAbsolutePath).mkString(", ")}")
+    }
   }
 
   private def _generate_from_one_source(
