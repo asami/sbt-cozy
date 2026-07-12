@@ -180,6 +180,35 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         resolved.last should startWith("runMain cozy.Cozy ")
       }
     }
+
+    "delegate component API JAR packaging through the machine bridge" in {
+      Given("a generated component JAR and API descriptor")
+      _with_temp_dir("sbt-cozy-component-api-jar-delegate") { dir =>
+        val output = dir / "target" / "example-api.jar"
+        val mainjar = _write(dir / "target" / "example.jar", "jar")
+        val descriptor = _write(dir / "target" / "component-api-descriptor.json", "{}")
+
+        When("the bridge execution is resolved")
+        val (_, resolved) = CozySbtBridge.resolveForTest(
+          basedir = dir,
+          delegateprojectdir = None,
+          delegatecommand = Seq("cozy"),
+          action = "component-api-jar",
+          arguments = Vector(
+            "--save", output.getAbsolutePath,
+            "--main-jar", mainjar.getAbsolutePath,
+            "--descriptor", descriptor.getAbsolutePath
+          )
+        )
+        val request = IO.read(file(resolved.last))
+
+        Then("the structured request keeps the action and all artifact paths")
+        request should include("\"action\": \"component-api-jar\"")
+        request should include(output.getAbsolutePath)
+        request should include(mainjar.getAbsolutePath)
+        request should include(descriptor.getAbsolutePath)
+      }
+    }
   }
 
   private def _with_temp_dir[A](prefix: String)(f: File => A): A = {

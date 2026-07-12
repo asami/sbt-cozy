@@ -121,6 +121,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyWireStandardPublishTasks = settingKey[Boolean]("Wire sbt publish/publishLocal to cozy CAR/SAR publication tasks.")
     val cozyCarName = settingKey[String]("Base file name of the generated CAR archive")
     val cozySarName = settingKey[String]("Base file name of the generated SAR archive")
+    val cozyComponentApiJar = taskKey[Option[File]]("Build the generated contract-only component API jar when the component provides an API")
     val cozySpiJars = settingKey[Seq[File]]("Additional SPI jars to include under CAR /spi")
     val cozySarExtensionJars = settingKey[Seq[File]]("Injected extension jars to include under SAR /extension")
     val cozyManifestMetadata = settingKey[Map[String, String]]("Additional metadata fields written to the CAR component descriptor")
@@ -295,35 +296,60 @@ object CozyPlugin extends AutoPlugin {
       }
     },
 
+    cozyComponentApiJar := {
+      val log = streams.value.log
+      val descriptor = target.value / "cozy" / "component-api-descriptor.json"
+      val mainjar = (Compile / packageBin).value
+      if (!descriptor.isFile) {
+        None
+      } else {
+        val output = target.value / "cozy" / "spi" / s"${moduleName.value}-api.jar"
+        IO.createDirectory(output.getParentFile)
+        CozySbtBridge.buildComponentApiJar(
+          output = output,
+          mainjar = mainjar,
+          descriptor = descriptor,
+          basedir = baseDirectory.value,
+          delegateprojectdir = cozyDelegateProjectDir.value,
+          delegatecommand = cozyDelegateCommand.value,
+          log = log
+        )
+        Option(output).filter(_.isFile)
+      }
+    },
+
     cozyBuildCar := {
       val sourcedir = cozySourceDir.value
       val log = streams.value.log
       val archive = target.value / s"${cozyCarName.value}.car"
 
-      val mainJar = (Compile / packageBin).value
-      val classpathJars = (Compile / dependencyClasspath).value
+      val mainjar = (Compile / packageBin).value
+      val classpathjars = (Compile / dependencyClasspath).value
         .map(_.data)
         .filter(file => file.isFile && file.getName.endsWith(".jar"))
-      val libJars = classpathJars
-        .filterNot(_.getAbsolutePath == mainJar.getAbsolutePath)
+      val libjars = classpathjars
+        .filterNot(_.getAbsolutePath == mainjar.getAbsolutePath)
         .distinct
         .sortBy(_.getName)
-      val spiJars = cozySpiJars.value
+      val generatedapijar = cozyComponentApiJar.value.toSeq
+      val spijars = (generatedapijar ++ cozySpiJars.value)
         .filter(file => file.isFile && file.getName.endsWith(".jar"))
         .distinct
         .sortBy(_.getName)
-      val packagingMetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value, version.value)
+      val componentapidescriptor = Option(target.value / "cozy" / "component-api-descriptor.json").filter(_.isFile)
+      val packagingmetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value, version.value)
       CozySbtBridge.packageCar(
         archive = archive,
-        mainJar = mainJar,
-        libJars = libJars,
-        spiJars = spiJars,
-        projectDir = baseDirectory.value,
+        mainjar = mainjar,
+        libjars = libjars,
+        spijars = spijars,
+        componentapidescriptor = componentapidescriptor,
+        projectdir = baseDirectory.value,
         name = moduleName.value,
         version = version.value,
-        component = packagingMetadata.component,
-        extensions = packagingMetadata.extensions,
-        config = packagingMetadata.config,
+        component = packagingmetadata.component,
+        extensions = packagingmetadata.extensions,
+        config = packagingmetadata.config,
         basedir = baseDirectory.value,
         delegateprojectdir = cozyDelegateProjectDir.value,
         delegatecommand = cozyDelegateCommand.value,
@@ -2241,10 +2267,11 @@ private[cozy] object CozySbtBridge {
 
   def packageCar(
     archive: File,
-    mainJar: File,
-    libJars: Seq[File],
-    spiJars: Seq[File],
-    projectDir: File,
+    mainjar: File,
+    libjars: Seq[File],
+    spijars: Seq[File],
+    componentapidescriptor: Option[File],
+    projectdir: File,
     name: String,
     version: String,
     component: String,
@@ -2263,7 +2290,7 @@ private[cozy] object CozySbtBridge {
             "--save",
             archive.getAbsolutePath,
             "--main-jar",
-            mainJar.getAbsolutePath,
+            mainjar.getAbsolutePath,
             "--name",
             name,
             "--version",
@@ -2271,11 +2298,37 @@ private[cozy] object CozySbtBridge {
             "--component",
             component
           ) ++
-            _csv_arg("lib-jars", libJars.map(_.getAbsolutePath)) ++
-            _csv_arg("spi-jars", spiJars.map(_.getAbsolutePath)) ++
-            Vector("--project-dir", projectDir.getAbsolutePath) ++
+            _csv_arg("lib-jars", libjars.map(_.getAbsolutePath)) ++
+            _csv_arg("spi-jars", spijars.map(_.getAbsolutePath)) ++
+            componentapidescriptor.toVector.flatMap(file => Vector("--component-api-descriptor", file.getAbsolutePath)) ++
+            Vector("--project-dir", projectdir.getAbsolutePath) ++
             _map_arg("extensions", extensions) ++
             _map_arg("config", config)
+      ),
+      basedir,
+      delegateprojectdir,
+      delegatecommand,
+      log
+    )
+  }
+
+  def buildComponentApiJar(
+    output: File,
+    mainjar: File,
+    descriptor: File,
+    basedir: File,
+    delegateprojectdir: Option[File],
+    delegatecommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    _run(
+      _request(
+        action = "component-api-jar",
+        arguments = Vector(
+          "--save", output.getAbsolutePath,
+          "--main-jar", mainjar.getAbsolutePath,
+          "--descriptor", descriptor.getAbsolutePath
+        )
       ),
       basedir,
       delegateprojectdir,
