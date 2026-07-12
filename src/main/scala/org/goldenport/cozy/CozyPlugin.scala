@@ -96,6 +96,8 @@ final case class CozyCoursierChannelEntry(
 
 object CozyPlugin extends AutoPlugin {
   object autoImport {
+    type CarDependency = org.goldenport.cozy.CarDependency
+    val CarDependency = org.goldenport.cozy.CarDependency
     type CozyCoursierChannelEntry = org.goldenport.cozy.CozyCoursierChannelEntry
     val CozyCoursierChannelEntry = org.goldenport.cozy.CozyCoursierChannelEntry
 
@@ -123,6 +125,9 @@ object CozyPlugin extends AutoPlugin {
     val cozySarName = settingKey[String]("Base file name of the generated SAR archive")
     val cozyComponentApiJar = taskKey[Option[File]]("Build the generated contract-only component API jar when the component provides an API")
     val cozySpiJars = settingKey[Seq[File]]("Additional SPI jars to include under CAR /spi")
+    val cozyCarDependencies = settingKey[Seq[CarDependency]]("Exact CAR dependencies whose published component APIs are required for compilation")
+    val cozyCarRepositories = settingKey[Seq[String]]("Ordered local and remote CAR repositories")
+    val cozyResolvedComponentApiJars = taskKey[Seq[File]]("Resolve and extract required component API jars from declared CAR dependencies")
     val cozySarExtensionJars = settingKey[Seq[File]]("Injected extension jars to include under SAR /extension")
     val cozyManifestMetadata = settingKey[Map[String, String]]("Additional metadata fields written to the CAR component descriptor")
     val cozyLocalRepositoryDir = settingKey[File]("Legacy local repository directory; publish tasks use cozyWarehouseDir")
@@ -195,6 +200,20 @@ object CozyPlugin extends AutoPlugin {
     cozyCarName := s"${moduleName.value}-${version.value}",
     cozySarName := s"${moduleName.value}-${version.value}",
     cozySpiJars := Seq.empty,
+    cozyCarDependencies := Seq.empty,
+    cozyCarRepositories := {
+      val configured = cozyProjectConfig.value.list("repositories.car")
+      if (configured.nonEmpty) configured
+      else {
+        val home = file(sys.props.getOrElse("user.home", "."))
+        Seq(
+          (cozyLocalWarehouseDir.value / "repository" / "car").getAbsolutePath,
+          (home / ".cncf" / "repository" / "car").getAbsolutePath,
+          (home / ".cncf" / "cache" / "car").getAbsolutePath,
+          "https://www.simplemodeling.org/repository/car"
+        ).distinct
+      }
+    },
     cozySarExtensionJars := Seq.empty,
     cozyManifestMetadata := Map.empty,
     cozyLocalRepositoryDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("packaging.localRepositoryDir")).getOrElse(target.value / "cozy-repository"),
@@ -317,6 +336,39 @@ object CozyPlugin extends AutoPlugin {
         Option(output).filter(_.isFile)
       }
     },
+
+    cozyResolvedComponentApiJars := {
+      val _ = cozyGenerate.value
+      val dependencies = cozyCarDependencies.value
+      val repositories = cozyCarRepositories.value
+      val targetdir = target.value
+      val basedir = baseDirectory.value
+      val delegateprojectdir = cozyDelegateProjectDir.value
+      val delegatecommand = cozyDelegateCommand.value
+      val log = streams.value.log
+      val descriptor = targetdir / "cozy" / "component-api-descriptor.json"
+      if (!descriptor.isFile)
+        sys.error(s"[sbt-cozy] component API descriptor is unavailable after generation: ${descriptor.getAbsolutePath}")
+      val carcache = targetdir / "cozy" / "car-cache"
+      val cars = dependencies.map(CarDependencyResolver.resolve(_, repositories, carcache))
+      val outputdir = targetdir / "cozy" / "component-api-dependencies"
+      val assemblydescriptor = Option(basedir / "src" / "main" / "car" / "assembly-descriptor.yaml").filter(_.isFile)
+      if (dependencies.nonEmpty && assemblydescriptor.isEmpty)
+        sys.error("[sbt-cozy] cozyCarDependencies requires src/main/car/assembly-descriptor.yaml with matching component coordinates")
+      CozySbtBridge.resolveComponentApiDependencies(
+        consumerdescriptor = descriptor,
+        dependencies = dependencies.zip(cars),
+        outputdir = outputdir,
+        assemblydescriptor = assemblydescriptor,
+        basedir = basedir,
+        delegateprojectdir = delegateprojectdir,
+        delegatecommand = delegatecommand,
+        log = log
+      )
+      (outputdir ** "*.jar").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+    },
+
+    Compile / unmanagedJars ++= cozyResolvedComponentApiJars.value.map(Attributed.blank),
 
     cozyBuildCar := {
       val sourcedir = cozySourceDir.value
@@ -2329,6 +2381,34 @@ private[cozy] object CozySbtBridge {
           "--main-jar", mainjar.getAbsolutePath,
           "--descriptor", descriptor.getAbsolutePath
         )
+      ),
+      basedir,
+      delegateprojectdir,
+      delegatecommand,
+      log
+    )
+  }
+
+  def resolveComponentApiDependencies(
+    consumerdescriptor: File,
+    dependencies: Seq[(CarDependency, File)],
+    outputdir: File,
+    assemblydescriptor: Option[File],
+    basedir: File,
+    delegateprojectdir: Option[File],
+    delegatecommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    val dependencyargs = dependencies.toVector.flatMap { case (dependency, archive) =>
+      Vector("--dependency", s"${dependency.name}\t${dependency.version}\t${archive.getAbsolutePath}")
+    }
+    _run(
+      _request(
+        action = "resolve-component-api-dependencies",
+        arguments = Vector(
+          "--consumer-descriptor", consumerdescriptor.getAbsolutePath,
+          "--output-dir", outputdir.getAbsolutePath
+        ) ++ dependencyargs ++ assemblydescriptor.toVector.flatMap(file => Vector("--assembly-descriptor", file.getAbsolutePath))
       ),
       basedir,
       delegateprojectdir,

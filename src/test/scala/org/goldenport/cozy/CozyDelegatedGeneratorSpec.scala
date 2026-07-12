@@ -209,6 +209,35 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         request should include(descriptor.getAbsolutePath)
       }
     }
+
+    "delegate component API dependency matching through the machine bridge" in {
+      Given("a consumer descriptor and one resolved dependency CAR")
+      _with_temp_dir("sbt-cozy-component-api-dependency-delegate") { dir =>
+        val consumer = _write(dir / "consumer.json", "{}")
+        val archive = _write(dir / "provider.car", "car")
+        val outputdir = dir / "resolved"
+
+        When("the structured bridge request is rendered")
+        val (_, resolved) = CozySbtBridge.resolveForTest(
+          basedir = dir,
+          delegateprojectdir = None,
+          delegatecommand = Seq("cozy"),
+          action = "resolve-component-api-dependencies",
+          arguments = Vector(
+            "--consumer-descriptor", consumer.getAbsolutePath,
+            "--output-dir", outputdir.getAbsolutePath,
+            "--dependency", s"provider\t0.1.0\t${archive.getAbsolutePath}"
+          )
+        )
+        val request = IO.read(file(resolved.last))
+
+        Then("the request keeps the consumer, output, and exact CAR coordinate")
+        request should include("\"action\": \"resolve-component-api-dependencies\"")
+        request should include(consumer.getAbsolutePath)
+        request should include(outputdir.getAbsolutePath)
+        request should include("provider\\t0.1.0\\t")
+      }
+    }
   }
 
   private def _with_temp_dir[A](prefix: String)(f: File => A): A = {
