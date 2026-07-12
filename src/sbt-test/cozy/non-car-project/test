@@ -1,3 +1,7 @@
 > clean
 > compile
 > verifyNoComponentApiDependencies
+> publish
+> verifyMavenPublication
+> publishLocal
+> verifyLocalPublication

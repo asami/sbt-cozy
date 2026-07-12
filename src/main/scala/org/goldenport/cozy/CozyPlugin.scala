@@ -87,6 +87,26 @@ object CozyProjectConfig {
   }
 }
 
+private[cozy] final case class CozyPackagingPolicy(
+  packaging: String,
+  wireStandardPublishTasks: Boolean
+)
+private[cozy] object CozyPackagingPolicy {
+  def resolve(projectmetadata: CozyProjectConfig): CozyPackagingPolicy = {
+    val explicitpackaging = projectmetadata.value("packaging.kind")
+    val projectarchive = projectmetadata
+      .value("project.kind")
+      .map(_.toLowerCase(java.util.Locale.ROOT))
+      .filter(x => x == "car" || x == "sar")
+    val packaging = explicitpackaging
+      .orElse(projectarchive)
+      .map(_.toLowerCase(java.util.Locale.ROOT))
+      .getOrElse("maven")
+    val wirestandardpublishtasks = packaging == "car" || packaging == "sar"
+    CozyPackagingPolicy(packaging, wirestandardpublishtasks)
+  }
+}
+
 final case class CozyCoursierChannelEntry(
   name: String,
   repositories: Seq[String],
@@ -123,8 +143,8 @@ object CozyPlugin extends AutoPlugin {
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
     val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare runtime classpath file.")
 
-    val cozyPackaging = settingKey[String]("Default packaging target. Either 'car' or 'sar'.")
-    val cozyWireStandardPublishTasks = settingKey[Boolean]("Wire sbt publish/publishLocal to cozy CAR/SAR publication tasks.")
+    val cozyPackaging = settingKey[String]("Effective packaging target, such as 'maven', 'car', or 'sar'.")
+    val cozyWireStandardPublishTasks = settingKey[Boolean]("Route sbt publish/publishLocal to Cozy CAR/SAR publication tasks when the project metadata declares an archive project.")
     val cozyCarName = settingKey[String]("Base file name of the generated CAR archive")
     val cozySarName = settingKey[String]("Base file name of the generated SAR archive")
     val cozyComponentApiJar = taskKey[Option[File]]("Build the generated contract-only component API jar when the component provides an API")
@@ -199,8 +219,11 @@ object CozyPlugin extends AutoPlugin {
     cozySkipUnchangedGeneration := cozyProjectConfig.value.boolean("generation.skip_unchanged").getOrElse(true),
     cozyWebDescriptorSync := cozyProjectConfig.value.boolean("generation.web_descriptor_sync").getOrElse(true),
 
-    cozyPackaging := cozyProjectConfig.value.value("packaging.kind").getOrElse("car"),
-    cozyWireStandardPublishTasks := cozyProjectConfig.value.boolean("packaging.wire_standard_publish_tasks").getOrElse(true),
+    cozyPackaging := CozyPackagingPolicy.resolve(cozyProjectMetadata.value).packaging,
+    cozyWireStandardPublishTasks := {
+      val packaging = cozyPackaging.value.trim.toLowerCase(java.util.Locale.ROOT)
+      packaging == "car" || packaging == "sar"
+    },
     cozyCarName := s"${moduleName.value}-${version.value}",
     cozySarName := s"${moduleName.value}-${version.value}",
     cozySpiJars := Seq.empty,
@@ -553,21 +576,23 @@ object CozyPlugin extends AutoPlugin {
 
     publish := Def.taskDyn {
       if (!cozyWireStandardPublishTasks.value) {
-        sys.error("[sbt-cozy] standard sbt publish is disabled by cozyWireStandardPublishTasks=false; define publish explicitly or use cozyPublishCar/cozyPublishSar")
-      }
-      publishTaskLabel(cozyPackaging.value, local = false) match {
-        case "cozyPublishCar" => Def.task { val _ = cozyPublishCar.value; () }
-        case "cozyPublishSar" => Def.task { val _ = cozyPublishSar.value; () }
+        Classpaths.publishOrSkip(publishConfiguration, publish / skip)
+      } else {
+        publishTaskLabel(cozyPackaging.value, local = false) match {
+          case "cozyPublishCar" => Def.task { val _ = cozyPublishCar.value; () }
+          case "cozyPublishSar" => Def.task { val _ = cozyPublishSar.value; () }
+        }
       }
     }.value,
 
     publishLocal := Def.taskDyn {
       if (!cozyWireStandardPublishTasks.value) {
-        sys.error("[sbt-cozy] standard sbt publishLocal is disabled by cozyWireStandardPublishTasks=false; define publishLocal explicitly or use cozyPublishLocalCar/cozyPublishLocalSar")
-      }
-      publishTaskLabel(cozyPackaging.value, local = true) match {
-        case "cozyPublishLocalCar" => Def.task { val _ = cozyPublishLocalCar.value; () }
-        case "cozyPublishLocalSar" => Def.task { val _ = cozyPublishLocalSar.value; () }
+        Classpaths.publishOrSkip(publishLocalConfiguration, publishLocal / skip)
+      } else {
+        publishTaskLabel(cozyPackaging.value, local = true) match {
+          case "cozyPublishLocalCar" => Def.task { val _ = cozyPublishLocalCar.value; () }
+          case "cozyPublishLocalSar" => Def.task { val _ = cozyPublishLocalSar.value; () }
+        }
       }
     }.value,
 

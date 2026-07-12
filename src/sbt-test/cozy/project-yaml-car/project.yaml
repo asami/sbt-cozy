@@ -1,0 +1,5 @@
+project:
+  name: project-yaml-car
+  kind: car
+packaging:
+  kind: car
