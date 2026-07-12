@@ -94,6 +94,10 @@ final case class CozyCoursierChannelEntry(
   mainClass: String
 )
 
+private[cozy] object ComponentApiDependencyResolution {
+  def isRequired(dependencies: Seq[CarDependency]): Boolean = dependencies.nonEmpty
+}
+
 object CozyPlugin extends AutoPlugin {
   object autoImport {
     type CarDependency = org.goldenport.cozy.CarDependency
@@ -337,36 +341,42 @@ object CozyPlugin extends AutoPlugin {
       }
     },
 
-    cozyResolvedComponentApiJars := {
-      val _ = cozyGenerate.value
+    cozyResolvedComponentApiJars := Def.taskDyn {
       val dependencies = cozyCarDependencies.value
-      val repositories = cozyCarRepositories.value
-      val targetdir = target.value
-      val basedir = baseDirectory.value
-      val delegateprojectdir = cozyDelegateProjectDir.value
-      val delegatecommand = cozyDelegateCommand.value
-      val log = streams.value.log
-      val descriptor = targetdir / "cozy" / "component-api-descriptor.json"
-      if (!descriptor.isFile)
-        sys.error(s"[sbt-cozy] component API descriptor is unavailable after generation: ${descriptor.getAbsolutePath}")
-      val carcache = targetdir / "cozy" / "car-cache"
-      val cars = dependencies.map(CarDependencyResolver.resolve(_, repositories, carcache))
-      val outputdir = targetdir / "cozy" / "component-api-dependencies"
-      val assemblydescriptor = Option(basedir / "src" / "main" / "car" / "assembly-descriptor.yaml").filter(_.isFile)
-      if (dependencies.nonEmpty && assemblydescriptor.isEmpty)
-        sys.error("[sbt-cozy] cozyCarDependencies requires src/main/car/assembly-descriptor.yaml with matching component coordinates")
-      CozySbtBridge.resolveComponentApiDependencies(
-        consumerdescriptor = descriptor,
-        dependencies = dependencies.zip(cars),
-        outputdir = outputdir,
-        assemblydescriptor = assemblydescriptor,
-        basedir = basedir,
-        delegateprojectdir = delegateprojectdir,
-        delegatecommand = delegatecommand,
-        log = log
-      )
-      (outputdir ** "*.jar").get.filter(_.isFile).sortBy(_.getAbsolutePath)
-    },
+      if (!ComponentApiDependencyResolution.isRequired(dependencies)) {
+        Def.task(Seq.empty[File])
+      } else {
+        Def.task {
+          val _ = cozyGenerate.value
+          val repositories = cozyCarRepositories.value
+          val targetdir = target.value
+          val basedir = baseDirectory.value
+          val delegateprojectdir = cozyDelegateProjectDir.value
+          val delegatecommand = cozyDelegateCommand.value
+          val log = streams.value.log
+          val descriptor = targetdir / "cozy" / "component-api-descriptor.json"
+          if (!descriptor.isFile)
+            sys.error(s"[sbt-cozy] component API descriptor is unavailable after generation: ${descriptor.getAbsolutePath}")
+          val carcache = targetdir / "cozy" / "car-cache"
+          val cars = dependencies.map(CarDependencyResolver.resolve(_, repositories, carcache))
+          val outputdir = targetdir / "cozy" / "component-api-dependencies"
+          val assemblydescriptor = Option(basedir / "src" / "main" / "car" / "assembly-descriptor.yaml").filter(_.isFile)
+          if (assemblydescriptor.isEmpty)
+            sys.error("[sbt-cozy] cozyCarDependencies requires src/main/car/assembly-descriptor.yaml with matching component coordinates")
+          CozySbtBridge.resolveComponentApiDependencies(
+            consumerdescriptor = descriptor,
+            dependencies = dependencies.zip(cars),
+            outputdir = outputdir,
+            assemblydescriptor = assemblydescriptor,
+            basedir = basedir,
+            delegateprojectdir = delegateprojectdir,
+            delegatecommand = delegatecommand,
+            log = log
+          )
+          (outputdir ** "*.jar").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+        }
+      }
+    }.value,
 
     Compile / unmanagedJars ++= cozyResolvedComponentApiJars.value.map(Attributed.blank),
 
@@ -2049,7 +2059,7 @@ private[cozy] object CozyDelegatedGenerator {
       .toVector
       .sortBy(_.getAbsolutePath)
 
-    _install_component_api_descriptor(workdir, targetbasedir)
+    installComponentApiDescriptor(workdir, targetbasedir)
 
     _write_generated_manifest(manifestfile, uniquegenerated)
 
@@ -2061,7 +2071,7 @@ private[cozy] object CozyDelegatedGenerator {
     uniquegenerated
   }
 
-  private[cozy] def _install_component_api_descriptor(workdir: File, targetbasedir: File): Unit = {
+  private[cozy] def installComponentApiDescriptor(workdir: File, targetbasedir: File): Unit = {
     val descriptors = (workdir ** "component-api-descriptor.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
     descriptors match {
       case Seq() =>

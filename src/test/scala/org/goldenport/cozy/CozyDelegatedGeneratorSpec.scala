@@ -24,7 +24,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         )
 
         When("the delegated output is installed")
-        CozyDelegatedGenerator._install_component_api_descriptor(workdir, targetdir)
+        CozyDelegatedGenerator.installComponentApiDescriptor(workdir, targetdir)
 
         Then("the descriptor is copied without modification")
         val installed = targetdir / "cozy" / "component-api-descriptor.json"
@@ -41,7 +41,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         val stale = _write(targetdir / "cozy" / "component-api-descriptor.json", "{}\n")
 
         When("the delegated output is installed")
-        CozyDelegatedGenerator._install_component_api_descriptor(workdir, targetdir)
+        CozyDelegatedGenerator.installComponentApiDescriptor(workdir, targetdir)
 
         Then("the stale descriptor is removed")
         stale.exists() shouldBe false

@@ -1,5 +1,8 @@
+import sbt.ScriptedPlugin
+import sbt.ScriptedPlugin.autoImport._
+
 ThisBuild / organization := "org.goldenport"
-ThisBuild / version := "0.1.12"
+ThisBuild / version := "0.1.13-SNAPSHOT"
 ThisBuild / description := "sbt plugin for cozy/CML Scala source generation and CAR/SAR packaging"
 
 ThisBuild / publishArtifact := true
@@ -31,10 +34,13 @@ ThisBuild / publishTo := {
 }
 
 lazy val root = (project in file("."))
+  .enablePlugins(ScriptedPlugin)
   .settings(
     name := "sbt-cozy",
     sbtPlugin := true,
     scalaVersion := "2.12.20",
     scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
-    libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test
+    libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+    scriptedBufferLog := false,
+    scriptedLaunchOpts += s"-Dplugin.version=${version.value}"
   )
