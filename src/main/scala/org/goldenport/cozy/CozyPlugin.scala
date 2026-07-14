@@ -3,6 +3,8 @@ package org.goldenport.cozy
 import java.time.Instant
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 import scala.collection.JavaConverters._
 
 import sbt._
@@ -18,7 +20,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul. 12, 2026
+ * @version Jul. 15, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -116,6 +118,44 @@ final case class CozyCoursierChannelEntry(
 
 private[cozy] object ComponentApiDependencyResolution {
   def isRequired(dependencies: Seq[CarDependency]): Boolean = dependencies.nonEmpty
+}
+
+private[cozy] object CozyCncfRuntimeDescriptor {
+  private val _entry_path = "META-INF/cncf/runtime.yaml"
+
+  final case class Extracted(path: File, sha256: String)
+
+  def extractRequired(jars: Seq[File], target: File): Extracted =
+    extract(jars, target).getOrElse {
+      sys.error(s"[sbt-cozy] CNCF runtime descriptor is unavailable in resolved dependencies: ${_entry_path}")
+    }
+
+  def extract(jars: Seq[File], target: File): Option[Extracted] = {
+    val candidates = jars.filter(file => file.isFile && file.getName.endsWith(".jar")).flatMap { jar =>
+      val zip = new ZipFile(jar)
+      try {
+        Option(zip.getEntry(_entry_path)).map { entry =>
+          val stream = zip.getInputStream(entry)
+          try jar -> stream.readAllBytes()
+          finally stream.close()
+        }
+      } finally {
+        zip.close()
+      }
+    }
+    candidates match {
+      case Seq() => None
+      case Seq((_, bytes)) =>
+        IO.createDirectory(target.getParentFile)
+        IO.write(target, bytes)
+        Some(Extracted(target, _sha256(bytes)))
+      case xs =>
+        sys.error(s"[sbt-cozy] multiple CNCF runtime descriptors resolved: ${xs.map(_._1.getAbsolutePath).mkString(", ")}")
+    }
+  }
+
+  private def _sha256(bytes: Array[Byte]): String =
+    MessageDigest.getInstance("SHA-256").digest(bytes).map(b => f"${b & 0xff}%02x").mkString
 }
 
 object CozyPlugin extends AutoPlugin {
@@ -278,11 +318,11 @@ object CozyPlugin extends AutoPlugin {
       val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val delegateprojectdir = cozyDelegateProjectDir.value
       val delegatecommand = cozyDelegateCommand.value
-      val generationversionoverrides = cozyGenerationVersionOverrides.value ++ Map(
-        "component.module" -> moduleName.value,
-        "component.version" -> version.value
-      )
-      val skipUnchanged = cozySkipUnchangedGeneration.value
+      val resolvedfiles = (Compile / update).value.allFiles
+      val generationversions = cozyGenerationVersionOverrides.value
+      val componentmodule = moduleName.value
+      val componentversion = version.value
+      val skipunchanged = cozySkipUnchangedGeneration.value
       val log = streams.value.log
 
       CozyConfigValidator.validate(config) match {
@@ -295,6 +335,23 @@ object CozyPlugin extends AutoPlugin {
         log.debug(s"[sbt-cozy] no cozy sources found under ${sourcedir.getAbsolutePath}")
         Seq.empty
       } else {
+        val runtimesettings =
+          if (backend == "cozy") {
+            val descriptor = CozyCncfRuntimeDescriptor.extractRequired(
+              resolvedfiles,
+              target.value / "sbt-cozy" / "cncf-runtime.yaml"
+            )
+            Map(
+              "runtime.cncf.descriptor" -> descriptor.path.getAbsolutePath,
+              "runtime.cncf.descriptor.sha256" -> descriptor.sha256
+            )
+          } else {
+            Map.empty[String, String]
+          }
+        val generationversionoverrides = generationversions ++ runtimesettings ++ Map(
+          "component.module" -> componentmodule,
+          "component.version" -> componentversion
+        )
         if (cozyWebDescriptorSync.value) {
           CozyWebDescriptorSync.sync(
             projectdir = baseDirectory.value,
@@ -307,7 +364,7 @@ object CozyPlugin extends AutoPlugin {
         val currentinputs = CozyGenerationState.capture(sourcedir, cozyfiles, backend, config, generationversionoverrides)
         val currentoutputs = CozyGenerationState.currentoutputs(targetdir)
 
-        if (skipUnchanged && CozyGenerationState.isUpToDate(statefile, currentinputs, currentoutputs)) {
+        if (skipunchanged && CozyGenerationState.isUpToDate(statefile, currentinputs, currentoutputs)) {
           log.info(s"[sbt-cozy] skipped generation; CML timestamps unchanged (${currentoutputs.size} source(s) reused)")
           currentoutputs
         } else {
