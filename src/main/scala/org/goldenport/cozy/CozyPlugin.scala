@@ -363,11 +363,14 @@ object CozyPlugin extends AutoPlugin {
         val statefile = target.value / "sbt-cozy" / "generation-state.properties"
         val currentinputs = CozyGenerationState.capture(sourcedir, cozyfiles, backend, config, generationversionoverrides)
         val currentoutputs = CozyGenerationState.currentoutputs(targetdir)
+        val sideoutputsavailable = backend != "cozy" || CozyDelegatedGenerator.hasModelMetadata(target.value, cozyfiles.size)
 
-        if (skipunchanged && CozyGenerationState.isUpToDate(statefile, currentinputs, currentoutputs)) {
+        if (skipunchanged && sideoutputsavailable && CozyGenerationState.isUpToDate(statefile, currentinputs, currentoutputs)) {
           log.info(s"[sbt-cozy] skipped generation; CML timestamps unchanged (${currentoutputs.size} source(s) reused)")
           currentoutputs
         } else {
+        if (skipunchanged && !sideoutputsavailable)
+          log.info("[sbt-cozy] regenerating because required CML model metadata side output is unavailable")
         backend match {
           case "cozy" =>
             if (config != CozyConfig.default) {
@@ -479,6 +482,12 @@ object CozyPlugin extends AutoPlugin {
         .distinct
         .sortBy(_.getName)
       val componentapidescriptor = Option(target.value / "cozy" / "component-api-descriptor.json").filter(_.isFile)
+      val modelmetadata =
+        Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile).toSeq ++
+          ((target.value / "cozy" / "model-metadata") ** "*.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+      val abimanifestoutput = target.value / "cozy" / "abi-manifest.json"
+      if (abimanifestoutput.isFile)
+        IO.delete(abimanifestoutput)
       val packagingmetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value, version.value)
       CozySbtBridge.packageCar(
         archive = archive,
@@ -486,6 +495,8 @@ object CozyPlugin extends AutoPlugin {
         libjars = libjars,
         spijars = spijars,
         componentapidescriptor = componentapidescriptor,
+        modelmetadata = modelmetadata,
+        abimanifestoutput = abimanifestoutput,
         projectdir = baseDirectory.value,
         name = moduleName.value,
         version = version.value,
@@ -2142,6 +2153,7 @@ private[cozy] object CozyDelegatedGenerator {
       .sortBy(_.getAbsolutePath)
 
     installComponentApiDescriptor(workdir, targetbasedir)
+    installModelMetadata(workdir, targetbasedir)
 
     _write_generated_manifest(manifestfile, uniquegenerated)
 
@@ -2167,6 +2179,35 @@ private[cozy] object CozyDelegatedGenerator {
       case _ =>
         sys.error(s"[sbt-cozy] multiple component API descriptors were generated: ${descriptors.map(_.getAbsolutePath).mkString(", ")}")
     }
+  }
+
+  private[cozy] def installModelMetadata(workdir: File, targetbasedir: File): Unit = {
+    val metadata = (workdir ** "model-metadata.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+    val targetmetadata = targetbasedir / "cozy" / "model-metadata.json"
+    val targetmetadatadir = targetbasedir / "cozy" / "model-metadata"
+    IO.delete(targetmetadatadir)
+    if (targetmetadata.isFile)
+      IO.delete(targetmetadata)
+    metadata match {
+      case Seq() =>
+      case Seq(source) =>
+        IO.createDirectory(targetmetadata.getParentFile)
+        IO.copyFile(source, targetmetadata, preserveLastModified = true)
+      case sources =>
+        IO.createDirectory(targetmetadatadir)
+        sources.zipWithIndex.foreach { case (source, index) =>
+          IO.copyFile(source, targetmetadatadir / f"model-${index + 1}%03d.json", preserveLastModified = true)
+        }
+    }
+  }
+
+  private[cozy] def hasModelMetadata(targetbasedir: File, expectedcount: Int): Boolean = {
+    val targetmetadata = targetbasedir / "cozy" / "model-metadata.json"
+    val targetmetadatadir = targetbasedir / "cozy" / "model-metadata"
+    val installed =
+      Option(targetmetadata).filter(_.isFile).toVector ++
+        (targetmetadatadir ** "*.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+    installed.size == expectedcount
   }
 
   private def _generate_from_one_source(
@@ -2415,6 +2456,8 @@ private[cozy] object CozySbtBridge {
     libjars: Seq[File],
     spijars: Seq[File],
     componentapidescriptor: Option[File],
+    modelmetadata: Seq[File],
+    abimanifestoutput: File,
     projectdir: File,
     name: String,
     version: String,
@@ -2445,6 +2488,8 @@ private[cozy] object CozySbtBridge {
             _csv_arg("lib-jars", libjars.map(_.getAbsolutePath)) ++
             _csv_arg("spi-jars", spijars.map(_.getAbsolutePath)) ++
             componentapidescriptor.toVector.flatMap(file => Vector("--component-api-descriptor", file.getAbsolutePath)) ++
+            _csv_arg("model-metadata", modelmetadata.map(_.getAbsolutePath)) ++
+            Vector("--abi-manifest-output", abimanifestoutput.getAbsolutePath) ++
             Vector("--project-dir", projectdir.getAbsolutePath) ++
             _map_arg("extensions", extensions) ++
             _map_arg("config", config)

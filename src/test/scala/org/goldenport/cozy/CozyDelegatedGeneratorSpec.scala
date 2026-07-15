@@ -8,7 +8,7 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Jul. 12, 2026
+ * @version Jul. 15, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -45,6 +45,78 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
 
         Then("the stale descriptor is removed")
         stale.exists() shouldBe false
+      }
+    }
+
+    "install CML model metadata as a CAR packaging side output" in {
+      Given("a delegated generator work directory containing model metadata")
+      _with_temp_dir("sbt-cozy-model-metadata") { dir =>
+        val workdir = dir / "work"
+        val targetdir = dir / "target"
+        val source = _write(
+          workdir / "run-0" / "target" / "cozy" / "model-metadata.json",
+          "{\"schema\":\"cozy.cml.model-metadata.v1\"}\n"
+        )
+
+        When("the delegated output is installed")
+        CozyDelegatedGenerator.installModelMetadata(workdir, targetdir)
+
+        Then("the metadata is copied without modification")
+        val installed = targetdir / "cozy" / "model-metadata.json"
+        installed.isFile shouldBe true
+        IO.read(installed) shouldBe IO.read(source)
+      }
+    }
+
+    "remove stale CML model metadata when generation no longer publishes it" in {
+      Given("a stale target metadata file and delegated output without metadata")
+      _with_temp_dir("sbt-cozy-stale-model-metadata") { dir =>
+        val workdir = dir / "work"
+        val targetdir = dir / "target"
+        val stale = _write(targetdir / "cozy" / "model-metadata.json", "{}\n")
+
+        When("the delegated output is installed")
+        CozyDelegatedGenerator.installModelMetadata(workdir, targetdir)
+
+        Then("the stale metadata is removed")
+        stale.exists() shouldBe false
+      }
+    }
+
+    "retain multiple generated CML metadata files without selecting one arbitrarily" in {
+      Given("two CML generation runs that each publish model metadata")
+      _with_temp_dir("sbt-cozy-multiple-model-metadata") { dir =>
+        val workdir = dir / "work"
+        val targetdir = dir / "target"
+        val first = _write(workdir / "run-0" / "target" / "cozy" / "model-metadata.json", "{\"source\":\"first\"}\n")
+        val second = _write(workdir / "run-1" / "target" / "cozy" / "model-metadata.json", "{\"source\":\"second\"}\n")
+
+        When("the delegated outputs are installed")
+        CozyDelegatedGenerator.installModelMetadata(workdir, targetdir)
+
+        Then("both metadata documents are retained in deterministic order")
+        val installed = ((targetdir / "cozy" / "model-metadata") ** "*.json").get.sortBy(_.getName)
+        installed.map(x => IO.read(x)) shouldBe Seq(IO.read(first), IO.read(second))
+        (targetdir / "cozy" / "model-metadata.json").exists() shouldBe false
+      }
+    }
+
+    "require the complete model metadata side output before reusing generated Scala" in {
+      Given("target output for one CML source and for two CML sources")
+      _with_temp_dir("sbt-cozy-model-metadata-reuse") { dir =>
+        val targetdir = dir / "target"
+
+        When("the expected metadata output is absent, partial, or complete")
+        val absent = CozyDelegatedGenerator.hasModelMetadata(targetdir, 1)
+        _write(targetdir / "cozy" / "model-metadata" / "model-001.json", "{}\n")
+        val partial = CozyDelegatedGenerator.hasModelMetadata(targetdir, 2)
+        _write(targetdir / "cozy" / "model-metadata" / "model-002.json", "{}\n")
+        val complete = CozyDelegatedGenerator.hasModelMetadata(targetdir, 2)
+
+        Then("only the complete side-output set is reusable")
+        absent shouldBe false
+        partial shouldBe false
+        complete shouldBe true
       }
     }
 
