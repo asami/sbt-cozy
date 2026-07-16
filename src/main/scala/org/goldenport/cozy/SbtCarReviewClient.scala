@@ -2,6 +2,8 @@ package org.goldenport.cozy
 
 import java.io.File
 import java.io.ByteArrayInputStream
+import java.io.{ByteArrayOutputStream, InputStream}
+import java.net.{HttpURLConnection, URI}
 import java.nio.charset.StandardCharsets
 
 import scala.sys.process._
@@ -44,6 +46,67 @@ private[cozy] trait SbtReviewSubmissionTransport {
 
 private[cozy] trait SbtCbdReviewWireEndpoint {
   def submit(document: String): Either[String, String]
+}
+
+/** Fixed JSON-over-HTTP implementation for an explicitly configured CBD gateway. */
+private[cozy] final class SbtCbdReviewHttpEndpoint(
+  endpoint: String,
+  timeoutMillis: Int = 30000
+) extends SbtCbdReviewWireEndpoint {
+  import SbtCbdReviewHttpEndpoint.MAX_DOCUMENT_BYTES
+
+  def submit(document: String): Either[String, String] =
+    for {
+      uri <- _uri(endpoint)
+      _ <- Either.cond(document.getBytes(StandardCharsets.UTF_8).length <= MAX_DOCUMENT_BYTES, (), "cbd-review-request-too-large")
+      response <- _post(uri, document)
+    } yield response
+
+  private def _uri(value: String): Either[String, URI] =
+    scala.util.Try(new URI(value)).toOption.filter { uri =>
+      Set("http", "https").contains(Option(uri.getScheme).getOrElse("").toLowerCase(java.util.Locale.ROOT)) &&
+        uri.getHost != null && uri.getRawUserInfo == null && uri.getRawQuery == null && uri.getRawFragment == null
+    }.toRight("cbd-review-endpoint-invalid")
+
+  private def _post(uri: URI, document: String): Either[String, String] =
+    try {
+      val connection = uri.toURL.openConnection().asInstanceOf[HttpURLConnection]
+      connection.setRequestMethod("POST")
+      connection.setInstanceFollowRedirects(false)
+      connection.setConnectTimeout(timeoutMillis)
+      connection.setReadTimeout(timeoutMillis)
+      connection.setDoOutput(true)
+      connection.setRequestProperty("Content-Type", "application/json")
+      connection.setRequestProperty("Accept", "application/json")
+      val output = connection.getOutputStream
+      try output.write(document.getBytes(StandardCharsets.UTF_8)) finally output.close()
+      val status = connection.getResponseCode
+      val contenttype = Option(connection.getContentType).getOrElse("").toLowerCase(java.util.Locale.ROOT)
+      val input = if (status >= 200 && status < 300) connection.getInputStream else connection.getErrorStream
+      val response = _read(input)
+      connection.disconnect()
+      Either.cond(status >= 200 && status < 300 && contenttype.startsWith("application/json") && response.nonEmpty, response, "cbd-review-http-response-invalid")
+    } catch {
+      case NonFatal(_) => Left("cbd-review-http-request-failed")
+    }
+
+  private def _read(input: InputStream): String =
+    if (input == null) ""
+    else {
+      val output = new ByteArrayOutputStream()
+      val buffer = new Array[Byte](8192)
+      try {
+        Iterator.continually(input.read(buffer)).takeWhile(_ >= 0).foreach { size =>
+          if (output.size + size > MAX_DOCUMENT_BYTES) throw new IllegalArgumentException("cbd-review-response-too-large")
+          output.write(buffer, 0, size)
+        }
+        new String(output.toByteArray, StandardCharsets.UTF_8)
+      } finally input.close()
+    }
+}
+
+private[cozy] object SbtCbdReviewHttpEndpoint {
+  val MAX_DOCUMENT_BYTES = 128 * 1024 * 1024
 }
 
 /** Concrete sbt-side adapter for CBD's transport-neutral submission JSON. */
@@ -128,6 +191,12 @@ private[cozy] object SbtCozyCommandReviewTransport {
 }
 
 private[cozy] object SbtCarReviewClient {
+  def cozyProviderRequest(sbtRequest: String): Either[String, String] =
+    for {
+      reviewid <- _review_id(sbtRequest)
+      target <- _object(sbtRequest, "target")
+    } yield s"""{"schemaVersion":"textus.cbd.review-provider.v1","documentType":"provider-request","reviewId":${_quote(reviewid)},"target":$target,"limits":{"maxEvidenceItems":256,"maxObservations":256,"maxInputBytes":16777216,"timeoutMillis":120000},"requestedCapabilities":["cozy.car-analysis"],"requestedEvidenceKinds":["car-project","cml-model","build","car-package","abi","documentation"],"rules":{"include":[],"exclude":[]}}"""
+
   def submit(
     projectRoot: File,
     cozyRequest: String,
@@ -162,4 +231,29 @@ private[cozy] object SbtCarReviewClient {
     val pattern = "\"reviewId\":\"([^\"]+)\"".r
     pattern.findFirstMatchIn(request).map(_.group(1)).toRight("sbt-review-request-id-missing")
   }
+
+  private def _object(value: String, key: String): Either[String, String] = {
+    val start = ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*").r.findFirstMatchIn(value).map(_.end).getOrElse(-1)
+    if (start < 0 || start >= value.length || value(start) != '{') Left("review-provider-request-target-missing")
+    else {
+      val end = value.indices.drop(start).foldLeft((0, false, false, -1)) { case ((depth, quote, escape, found), index) =>
+        if (found >= 0) (depth, quote, escape, found)
+        else {
+          val char = value(index)
+          if (quote) (depth, char == '"' && !escape, char == '\\' && !escape, -1)
+          else if (char == '"') (depth, true, false, -1)
+          else if (char == '{') (depth + 1, false, false, -1)
+          else if (char == '}' && depth == 1) (0, false, false, index)
+          else if (char == '}') (depth - 1, false, false, -1)
+          else (depth, false, false, -1)
+        }
+      }._4
+      if (end >= 0) Right(value.substring(start, end + 1)) else Left("review-provider-request-target-invalid")
+    }
+  }
+
+  private def _quote(value: String): String =
+    "\"" + value.flatMap {
+      case '\\' => "\\\\"; case '"' => "\\\""; case '\n' => "\\n"; case '\r' => "\\r"; case '\t' => "\\t"; case char => char.toString
+    } + "\""
 }

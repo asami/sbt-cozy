@@ -75,6 +75,38 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       response.report shouldBe "{\"report\":true}"
       response.gate shouldBe "unknown"
     }
+
+    "reject an endpoint that could carry credentials or a non-HTTP scheme" in {
+      Given("two unsafe configured CBD gateway locations")
+      val credentialed = new SbtCbdReviewHttpEndpoint("https://user:secret@cbd.example/review")
+      val file = new SbtCbdReviewHttpEndpoint("file:///tmp/cbd-review")
+
+      When("sbt-cozy attempts to submit a Review document")
+      val credentialedresponse = credentialed.submit("{}")
+      val fileresponse = file.submit("{}")
+
+      Then("the client refuses them before any HTTP request")
+      credentialedresponse shouldBe Left("cbd-review-endpoint-invalid")
+      fileresponse shouldBe Left("cbd-review-endpoint-invalid")
+    }
+
+    "derive Cozy's provider request from the same sbt target binding" in {
+      Given("one sbt-cozy provider request")
+      val sbtrequest = SbtReviewEvidence.render(
+        SbtReviewEvidenceTarget(Some("org.example"), "fixture", "1.0.0", "sha256:" + ("a" * 64)),
+        "0.1.15-SNAPSHOT",
+        Vector(SbtReviewTaskResult("task-result", "succeeded"))
+      ).request
+
+      When("the local Cozy invocation request is derived")
+      val request = SbtCarReviewClient.cozyProviderRequest(sbtrequest).fold(error => fail(error), identity)
+
+      Then("both providers receive the identical Review and target without workspace authority")
+      request should include("\"reviewId\":\"sbt-cozy-fixture-")
+      request should include("\"target\":{\"digest\":\"sha256:")
+      request should include("\"cozy.car-analysis\"")
+      request should not include "workspace"
+    }
   }
 
   private final class RecordingCozyTransport extends SbtLocalCozyReviewTransport {

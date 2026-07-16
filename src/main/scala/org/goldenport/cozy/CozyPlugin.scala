@@ -235,6 +235,8 @@ object CozyPlugin extends AutoPlugin {
     val cozyPublishCoursierChannel = taskKey[File]("Publish configured Coursier channel entries to the warehouse")
     val cozyReviewEvidenceDir = settingKey[File]("Directory for provider-owned sbt CAR Review evidence documents")
     val cozyReviewSbtEvidence = taskKey[File]("Emit deterministic sbt-cozy Review Provider descriptor, request, and task evidence bundle")
+    val cozyReviewCbdEndpoint = settingKey[Option[String]]("Explicit private CBD Review HTTP gateway endpoint")
+    val cozyReviewSubmit = taskKey[File]("Collect local Cozy and sbt evidence, then submit it to the configured CBD Review gateway")
   }
 
   import autoImport._
@@ -314,6 +316,7 @@ object CozyPlugin extends AutoPlugin {
     cozyCoursierChannelPath := cozyProjectConfig.value.value("coursier.channel.path").getOrElse("repository/cozy/coursier-channel.json"),
     cozyCoursierChannelEntries := Seq.empty,
     cozyReviewEvidenceDir := target.value / "cbd-review" / "sbt-cozy",
+    cozyReviewCbdEndpoint := cozyProjectConfig.value.value("review.cbd.endpoint"),
     cozyGenerate := {
       val sourcedir = cozySourceDir.value
       val targetdir = cozyTargetDir.value
@@ -854,6 +857,30 @@ object CozyPlugin extends AutoPlugin {
           )
         }
     }.value,
+
+    cozyReviewSubmit := {
+      val endpoint = cozyReviewCbdEndpoint.value.getOrElse(sys.error("[sbt-cozy] configure review.cbd.endpoint before cozyReviewSubmit"))
+      val directory = cozyReviewEvidenceDir.value
+      val _ = cozyReviewSbtEvidence.value
+      val artifacts = SbtReviewEvidenceArtifacts(
+        IO.read(directory / "provider-descriptor.json").trim,
+        IO.read(directory / "provider-request.json").trim,
+        IO.read(directory / "evidence-bundle.json").trim
+      )
+      val cozyrequest = SbtCarReviewClient.cozyProviderRequest(artifacts.request).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
+      val response = SbtCarReviewClient.submit(
+        baseDirectory.value,
+        cozyrequest,
+        version.value,
+        artifacts,
+        new SbtCozyCommandReviewTransport(cozyDelegateCommand.value),
+        new SbtCbdReviewWireTransport(new SbtCbdReviewHttpEndpoint(endpoint))
+      ).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
+      val output = directory / "canonical-response.json"
+      IO.write(output, s"""{"report":${response.report},"gateResult":"${response.gate}"}\n""")
+      streams.value.log.info(s"[sbt-cozy] wrote CBD canonical Review response: ${output.getAbsolutePath}")
+      output
+    },
 
     Compile / sourceGenerators += cozyGenerate.taskValue
   )
