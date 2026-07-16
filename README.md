@@ -97,6 +97,10 @@ Tasks:
   `.cozy/config.yaml` `review.cbd.endpoint`
 - `cozyReviewCbdRole`: optional development-loopback submission role, read from
   `review.cbd.role`; only `reviewer`, `operator`, or `admin` are admitted
+- `cozyReviewCozyProviderVersion`: required Cozy runtime version recorded in
+  the local Cozy provider descriptor and bundle, read from
+  `review.cozy.provider_version`; it is deliberately not inferred from the
+  reviewed CAR's version
 - `cozyReviewSubmit`: invoke Cozy locally, submit Cozy and sbt evidence to the
   configured CBD endpoint, and write all canonical Review report artifacts
 - `cozyReviewCanonicalJson`: write `canonical-response.json`

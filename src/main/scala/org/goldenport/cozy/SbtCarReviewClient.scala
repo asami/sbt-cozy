@@ -6,6 +6,9 @@ import java.io.{ByteArrayOutputStream, InputStream}
 import java.net.{HttpURLConnection, URI}
 import java.nio.charset.StandardCharsets
 
+import io.circe.{Json, Printer}
+import io.circe.parser.parse
+
 import scala.sys.process._
 import scala.util.control.NonFatal
 
@@ -63,7 +66,7 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
       role <- _role(uri, reviewRole)
       _ <- Either.cond(document.getBytes(StandardCharsets.UTF_8).length <= MAX_DOCUMENT_BYTES, (), "cbd-review-request-too-large")
       response <- _post(uri, _envelope(document), role)
-      canonical <- _field(response, "canonicalResponse")
+      canonical <- _canonical_response(response)
     } yield canonical
 
   private def _uri(value: String): Either[String, URI] =
@@ -123,46 +126,12 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
   private def _envelope(document: String): String =
     s"""{"submissionDocument":${_quote(document)}}"""
 
-  private def _field(value: String, key: String): Either[String, String] = {
-    val marker = ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*").r
-    marker.findFirstMatchIn(value).map(_.end).map(_json_string(value, _)).getOrElse(Left("cbd-review-response-envelope-invalid"))
-  }
-
-  private def _json_string(value: String, start: Int): Either[String, String] =
-    if (start >= value.length || value.charAt(start) != '"') Left("cbd-review-response-envelope-invalid")
-    else {
-      val out = new StringBuilder
-      var index = start + 1
-      var closed = false
-      var valid = true
-      while (index < value.length && !closed && valid) {
-        value.charAt(index) match {
-          case '"' => closed = true
-          case '\\' if index + 1 >= value.length => valid = false
-          case '\\' =>
-            index += 1
-            value.charAt(index) match {
-              case 'n' => out.append('\n')
-              case 'r' => out.append('\r')
-              case 't' => out.append('\t')
-              case 'b' => out.append('\b')
-              case 'f' => out.append('\f')
-              case 'u' if index + 4 < value.length =>
-                val code = value.substring(index + 1, index + 5)
-                scala.util.Try(Integer.parseInt(code, 16)).toOption match {
-                  case Some(number) => out.append(number.toChar); index += 4
-                  case None => valid = false
-                }
-              case 'u' => valid = false
-              case char @ ('"' | '\\' | '/') => out.append(char)
-              case _ => valid = false
-            }
-          case char => out.append(char)
-        }
-        index += 1
-      }
-      if (closed && valid) Right(out.toString) else Left("cbd-review-response-envelope-invalid")
-    }
+  private def _canonical_response(value: String): Either[String, String] =
+    parse(value).toOption
+      .flatMap(_.asObject)
+      .filter(_.keys.toSet == Set("canonicalResponse"))
+      .flatMap(_("canonicalResponse").flatMap(_.asString).filter(_.nonEmpty))
+      .toRight("cbd-review-response-envelope-invalid")
 
   private def _quote(value: String): String =
     "\"" + value.flatMap {
@@ -176,16 +145,15 @@ private[cozy] object SbtCbdReviewHttpEndpoint {
 
 /** Concrete sbt-side adapter for CBD's transport-neutral submission JSON. */
 private[cozy] final class SbtCbdReviewWireTransport(endpoint: SbtCbdReviewWireEndpoint) extends SbtReviewSubmissionTransport {
+  private val _printer = Printer.noSpaces.copy(sortKeys = true)
+
   def submit(value: SbtReviewPairedSubmission): Either[String, SbtReviewCanonicalResponse] =
     for {
       target <- _object(value.providers.headOption.map(_.request).getOrElse(""), "target")
       request = _submission(value, target)
       response <- endpoint.submit(request)
-      report <- _object(response, "report")
-      attestation <- _object(response, "attestation")
-      gate <- _string(response, "gateResult")
-      _ <- Either.cond(Set("pass", "fail", "unknown").contains(gate), (), "cbd-review-response-gate-invalid")
-    } yield SbtReviewCanonicalResponse(report, gate, Some(attestation))
+      canonical <- _canonical_response(response)
+    } yield canonical
 
   private def _submission(value: SbtReviewPairedSubmission, target: String): String =
     s"""{"schemaVersion":"textus.cbd.review-submission.v1","documentType":"provider-document-submission","reviewId":${_quote(value.reviewId)},"target":$target,"providers":[${value.providers.map(_provider).mkString(",")}]}"""
@@ -198,28 +166,23 @@ private[cozy] final class SbtCbdReviewWireTransport(endpoint: SbtCbdReviewWireEn
       case '\\' => "\\\\"; case '\"' => "\\\""; case '\n' => "\\n"; case '\r' => "\\r"; case '\t' => "\\t"; case char => char.toString
     } + "\""
 
-  private def _string(value: String, key: String): Either[String, String] =
-    ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").r.findFirstMatchIn(value).map(_.group(1)).toRight("cbd-review-response-field-missing")
+  private def _canonical_response(value: String): Either[String, SbtReviewCanonicalResponse] =
+    for {
+      json <- parse(value).left.map(_ => "cbd-review-response-json-invalid")
+      fields <- json.asObject.filter(_.keys.toSet == Set("schemaVersion", "documentType", "report", "attestation", "gateResult")).toRight("cbd-review-response-shape-invalid")
+      _ <- Either.cond(fields("schemaVersion").flatMap(_.asString).contains("textus.cbd.review-submission.v1"), (), "cbd-review-response-schema-invalid")
+      _ <- Either.cond(fields("documentType").flatMap(_.asString).contains("canonical-review-response"), (), "cbd-review-response-document-type-invalid")
+      report <- fields("report").flatMap(_.asObject).map(value => _printer.print(Json.fromJsonObject(value))).toRight("cbd-review-response-report-invalid")
+      attestation <- fields("attestation").flatMap(_.asObject).map(value => _printer.print(Json.fromJsonObject(value))).toRight("cbd-review-response-attestation-invalid")
+      gate <- fields("gateResult").flatMap(_.asString).filter(Set("pass", "fail", "unknown")).toRight("cbd-review-response-gate-invalid")
+    } yield SbtReviewCanonicalResponse(report, gate, Some(attestation))
 
-  private def _object(value: String, key: String): Either[String, String] = {
-    val start = ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*").r.findFirstMatchIn(value).map(_.end).getOrElse(-1)
-    if (start < 0 || start >= value.length || value(start) != '{') Left("cbd-review-response-field-missing")
-    else {
-      val end = value.indices.drop(start).foldLeft((0, false, false, -1)) { case ((depth, quote, escape, found), index) =>
-        if (found >= 0) (depth, quote, escape, found)
-        else {
-          val char = value(index)
-          if (quote) (depth, char == '"' && !escape, char == '\\' && !escape, -1)
-          else if (char == '"') (depth, true, false, -1)
-          else if (char == '{') (depth + 1, false, false, -1)
-          else if (char == '}' && depth == 1) (0, false, false, index)
-          else if (char == '}') (depth - 1, false, false, -1)
-          else (depth, false, false, -1)
-        }
-      }._4
-      if (end >= 0) Right(value.substring(start, end + 1)) else Left("cbd-review-response-field-invalid")
-    }
-  }
+  private def _object(value: String, key: String): Either[String, String] =
+    parse(value).toOption
+      .flatMap(_.hcursor.get[Json](key).toOption)
+      .flatMap(_.asObject)
+      .map(value => _printer.print(Json.fromJsonObject(value)))
+      .toRight("review-provider-request-target-missing")
 }
 
 private[cozy] final class SbtCozyCommandReviewTransport(commandPrefix: Seq[String]) extends SbtLocalCozyReviewTransport {
@@ -257,6 +220,8 @@ private[cozy] object SbtCozyCommandReviewTransport {
 }
 
 private[cozy] object SbtCarReviewClient {
+  private val _printer = Printer.noSpaces.copy(sortKeys = true)
+
   def cozyProviderRequest(sbtRequest: String): Either[String, String] =
     for {
       reviewid <- _review_id(sbtRequest)
@@ -294,29 +259,18 @@ private[cozy] object SbtCarReviewClient {
     Vector(value.descriptor, value.request, value.bundle).forall(_.getBytes("UTF-8").length <= 16 * 1024 * 1024)
 
   private def _review_id(request: String): Either[String, String] = {
-    val pattern = "\"reviewId\":\"([^\"]+)\"".r
-    pattern.findFirstMatchIn(request).map(_.group(1)).toRight("sbt-review-request-id-missing")
+    parse(request).toOption
+      .flatMap(_.hcursor.get[String]("reviewId").toOption)
+      .filter(_.nonEmpty)
+      .toRight("sbt-review-request-id-missing")
   }
 
-  private def _object(value: String, key: String): Either[String, String] = {
-    val start = ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*").r.findFirstMatchIn(value).map(_.end).getOrElse(-1)
-    if (start < 0 || start >= value.length || value(start) != '{') Left("review-provider-request-target-missing")
-    else {
-      val end = value.indices.drop(start).foldLeft((0, false, false, -1)) { case ((depth, quote, escape, found), index) =>
-        if (found >= 0) (depth, quote, escape, found)
-        else {
-          val char = value(index)
-          if (quote) (depth, char == '"' && !escape, char == '\\' && !escape, -1)
-          else if (char == '"') (depth, true, false, -1)
-          else if (char == '{') (depth + 1, false, false, -1)
-          else if (char == '}' && depth == 1) (0, false, false, index)
-          else if (char == '}') (depth - 1, false, false, -1)
-          else (depth, false, false, -1)
-        }
-      }._4
-      if (end >= 0) Right(value.substring(start, end + 1)) else Left("review-provider-request-target-invalid")
-    }
-  }
+  private def _object(value: String, key: String): Either[String, String] =
+    parse(value).toOption
+      .flatMap(_.hcursor.get[Json](key).toOption)
+      .flatMap(_.asObject)
+      .map(value => _printer.print(Json.fromJsonObject(value)))
+      .toRight("review-provider-request-target-missing")
 
   private def _quote(value: String): String =
     "\"" + value.flatMap {

@@ -129,6 +129,39 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       response shouldBe Right(canonical)
     }
 
+    "reject a malformed generated HTTP response envelope before it reaches the Review wire" in {
+      Given("a loopback gateway whose response carries an undeclared envelope field")
+      val gateway = new RecordingHttpGateway("{\"documentType\":\"canonical-review-response\"}", extraField = true)
+      gateway.start()
+      val endpoint = new SbtCbdReviewHttpEndpoint(gateway.endpoint, reviewRole = Some("reviewer"))
+
+      When("sbt-cozy receives a non-generated CBD response shape")
+      val response = try endpoint.submit("{\"documentType\":\"provider-document-submission\"}") finally gateway.stop()
+
+      Then("it refuses the response rather than scanning a nested string for a canonical result")
+      response shouldBe Left("cbd-review-response-envelope-invalid")
+    }
+
+    "reject a canonical response with an invalid Report or attestation structure" in {
+      Given("a CBD wire response whose attestation is a scalar rather than a document")
+      val endpoint = new SbtCbdReviewWireEndpoint {
+        def submit(value: String): Either[String, String] = Right(
+          "{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{},\"attestation\":true,\"gateResult\":\"unknown\"}"
+        )
+      }
+      val transport = new SbtCbdReviewWireTransport(endpoint)
+      val paired = SbtReviewPairedSubmission("review-cozy-001", Vector(
+        SbtReviewProviderDocuments("cozy", "{\"descriptor\":true}", "{\"reviewId\":\"review-cozy-001\",\"target\":{\"kind\":\"project\"}}", "{\"bundle\":true}"),
+        SbtReviewProviderDocuments("sbt-cozy", "{\"descriptor\":true}", "{\"reviewId\":\"review-cozy-001\",\"target\":{\"kind\":\"project\"}}", "{\"bundle\":true}")
+      ))
+
+      When("the configured wire transport decodes CBD's response")
+      val response = transport.submit(paired)
+
+      Then("the transport refuses it before task artifacts can be written")
+      response shouldBe Left("cbd-review-response-attestation-invalid")
+    }
+
     "derive Cozy's provider request from the same sbt target binding" in {
       Given("one sbt-cozy provider request")
       val sbtrequest = SbtReviewEvidence.render(
@@ -175,7 +208,7 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
     }
   }
 
-  private final class RecordingHttpGateway(canonical: String) {
+  private final class RecordingHttpGateway(canonical: String, extraField: Boolean = false) {
     private val _server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
     private var _method = ""
     private var _contentType = ""
@@ -189,7 +222,8 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
         _role = Option(exchange.getRequestHeaders.getFirst("role")).getOrElse("")
         _body = scala.io.Source.fromInputStream(exchange.getRequestBody, "UTF-8").mkString
         val escaped = canonical.replace("\\", "\\\\").replace("\"", "\\\"")
-        val response = ("{\"canonicalResponse\":\"" + escaped + "\"}").getBytes(StandardCharsets.UTF_8)
+        val suffix = if (extraField) ",\"unexpected\":true" else ""
+        val response = ("{\"canonicalResponse\":\"" + escaped + "\"" + suffix + "}").getBytes(StandardCharsets.UTF_8)
         exchange.getResponseHeaders.set("Content-Type", "application/json")
         exchange.sendResponseHeaders(200, response.length)
         try exchange.getResponseBody.write(response) finally exchange.close()
