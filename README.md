@@ -84,6 +84,26 @@ Tasks:
 - `cozyDistribute`: distribute CAR or SAR based on `cozyPackaging`; use `cozyDistributeSamples` for `sample-multi`
 - `cozyIndexWarehouse`: generate Maven/CAR/SAR/download release metadata in `publish.d` by reading the warehouse
 
+### CAR Review
+
+- `cozyReviewEvidenceDir`: provider-owned sbt evidence directory (default:
+  `target/cbd-review/sbt-cozy`)
+- `cozyReviewSbtEvidence`: write deterministic descriptor, request, and evidence
+  bundle documents without deriving a quality assessment or gate
+- `cozyReviewCbdEndpoint`: optional CBD Review HTTP gateway, read by default from
+  `.cozy/config.yaml` `review.cbd.endpoint`
+- `cozyReviewCbdRole`: optional development-loopback submission role, read from
+  `review.cbd.role`; only `reviewer`, `operator`, or `admin` are admitted
+- `cozyReviewSubmit`: invoke Cozy locally, submit Cozy and sbt evidence to the
+  configured CBD endpoint, and write `canonical-response.json`
+
+The HTTP request is the generated CBD outer envelope with a single
+`submissionDocument` JSON-string member. URL user information, arbitrary
+headers, redirects, non-JSON responses, and oversized exchanges are rejected.
+`review.cbd.role` is only for a local development server using its explicit
+fallback role; production endpoints must use their configured authentication
+boundary rather than this setting.
+
 ## Backend Modes
 
 `cozy` backend (default):

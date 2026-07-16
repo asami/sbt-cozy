@@ -236,6 +236,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyReviewEvidenceDir = settingKey[File]("Directory for provider-owned sbt CAR Review evidence documents")
     val cozyReviewSbtEvidence = taskKey[File]("Emit deterministic sbt-cozy Review Provider descriptor, request, and task evidence bundle")
     val cozyReviewCbdEndpoint = settingKey[Option[String]]("Explicit private CBD Review HTTP gateway endpoint")
+    val cozyReviewCbdRole = settingKey[Option[String]]("Development-only CBD Review role header: reviewer, operator, or admin")
     val cozyReviewSubmit = taskKey[File]("Collect local Cozy and sbt evidence, then submit it to the configured CBD Review gateway")
   }
 
@@ -317,6 +318,7 @@ object CozyPlugin extends AutoPlugin {
     cozyCoursierChannelEntries := Seq.empty,
     cozyReviewEvidenceDir := target.value / "cbd-review" / "sbt-cozy",
     cozyReviewCbdEndpoint := cozyProjectConfig.value.value("review.cbd.endpoint"),
+    cozyReviewCbdRole := cozyProjectConfig.value.value("review.cbd.role"),
     cozyGenerate := {
       val sourcedir = cozySourceDir.value
       val targetdir = cozyTargetDir.value
@@ -874,7 +876,7 @@ object CozyPlugin extends AutoPlugin {
         version.value,
         artifacts,
         new SbtCozyCommandReviewTransport(cozyDelegateCommand.value),
-        new SbtCbdReviewWireTransport(new SbtCbdReviewHttpEndpoint(endpoint))
+        new SbtCbdReviewWireTransport(new SbtCbdReviewHttpEndpoint(endpoint, reviewRole = cozyReviewCbdRole.value))
       ).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
       val output = directory / "canonical-response.json"
       IO.write(output, s"""{"report":${response.report},"gateResult":"${response.gate}"}\n""")
