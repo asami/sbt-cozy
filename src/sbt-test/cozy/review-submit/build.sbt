@@ -22,13 +22,17 @@ lazy val root = (project in file("."))
     cozyReviewCozyProviderVersion := Some("0.3.0-SNAPSHOT"),
     verifyReviewSubmission := {
       val directory = cozyReviewEvidenceDir.value
+      val canonical = cozyReviewCanonicalJson.value
+      val attestation = cozyReviewAttestation.value
+      val html = cozyReviewReportHtml.value
+      val sarif = cozyReviewReportSarif.value
       val required = Seq(
-        "canonical-response.json",
-        "canonical-attestation.json",
-        "canonical-report.html",
-        "canonical-report.sarif"
+        canonical,
+        attestation,
+        html,
+        sarif
       )
-      if (!required.forall(name => (directory / name).isFile))
+      if (!required.forall(_.isFile))
         sys.error(s"CBD Review artifacts are incomplete under: $directory")
     }
   )
