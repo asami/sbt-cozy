@@ -20,7 +20,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul. 15, 2026
+ * @version Jul. 16, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -233,6 +233,8 @@ object CozyPlugin extends AutoPlugin {
     val cozyPublishProject = taskKey[File]("Generate SmartDox site BoK publication sources from this sbt project")
     val cozyIndexWarehouse = taskKey[File]("Generate publish.d artifact and release metadata by indexing the warehouse")
     val cozyPublishCoursierChannel = taskKey[File]("Publish configured Coursier channel entries to the warehouse")
+    val cozyReviewEvidenceDir = settingKey[File]("Directory for provider-owned sbt CAR Review evidence documents")
+    val cozyReviewSbtEvidence = taskKey[File]("Emit deterministic sbt-cozy Review Provider descriptor, request, and task evidence bundle")
   }
 
   import autoImport._
@@ -311,6 +313,7 @@ object CozyPlugin extends AutoPlugin {
     cozyCoursierChannelWarehouseDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("coursier.channel.warehouse")),
     cozyCoursierChannelPath := cozyProjectConfig.value.value("coursier.channel.path").getOrElse("repository/cozy/coursier-channel.json"),
     cozyCoursierChannelEntries := Seq.empty,
+    cozyReviewEvidenceDir := target.value / "cbd-review" / "sbt-cozy",
     cozyGenerate := {
       val sourcedir = cozySourceDir.value
       val targetdir = cozyTargetDir.value
@@ -817,8 +820,85 @@ object CozyPlugin extends AutoPlugin {
       cozyRuntimeClasspathFile.value
     },
 
+    cozyReviewSbtEvidence := Def.taskDyn {
+      if (cozyPackaging.value.trim.equalsIgnoreCase("car"))
+        Def.task {
+          _write_sbt_review_evidence(
+            _task_result((cozyGenerate).result.value),
+            _task_result((Compile / compile).result.value),
+            _task_result((Test / test).result.value),
+            _task_result((Compile / update).result.value),
+            _task_result(cozyBuildCar.result.value),
+            cozyReviewEvidenceDir.value,
+            baseDirectory.value,
+            organization.value,
+            moduleName.value,
+            version.value,
+            streams.value.log
+          )
+        }
+      else
+        Def.task {
+          _write_sbt_review_evidence(
+            _task_result((cozyGenerate).result.value),
+            _task_result((Compile / compile).result.value),
+            _task_result((Test / test).result.value),
+            _task_result((Compile / update).result.value),
+            "not-applicable",
+            cozyReviewEvidenceDir.value,
+            baseDirectory.value,
+            organization.value,
+            moduleName.value,
+            version.value,
+            streams.value.log
+          )
+        }
+    }.value,
+
     Compile / sourceGenerators += cozyGenerate.taskValue
   )
+
+  private def _task_result[A](result: Result[A]): String = result match {
+    case Value(_) => "succeeded"
+    case Inc(_) => "failed"
+  }
+
+  private def _write_sbt_review_evidence(
+    generation: String,
+    compilation: String,
+    tests: String,
+    dependencies: String,
+    carbuild: String,
+    directory: File,
+    projectroot: File,
+    organization: String,
+    name: String,
+    version: String,
+    log: Logger
+  ): File = {
+    val rawresults = Vector(
+      SbtReviewTaskResult("generation", generation),
+      SbtReviewTaskResult("compilation", compilation),
+      SbtReviewTaskResult("test", tests),
+      SbtReviewTaskResult("dependency-resolution", dependencies),
+      SbtReviewTaskResult("car-build", carbuild)
+    )
+    val aggregate = if (rawresults.exists(_.result == "failed")) "failed" else "succeeded"
+    val targetidentity = SbtReviewEvidenceTarget(
+      Option(organization).map(_.trim).filter(_.nonEmpty),
+      name,
+      version,
+      SbtReviewEvidence.sourceDigest(projectroot)
+    )
+    val artifacts = SbtReviewEvidence.render(
+      targetidentity,
+      version,
+      rawresults :+ SbtReviewTaskResult("task-result", aggregate)
+    )
+    val output = SbtReviewEvidence.write(directory, artifacts)
+    log.info(s"[sbt-cozy] wrote provider-owned sbt Review evidence: ${output.getAbsolutePath}")
+    output
+  }
 
   private def _validate_release_distribution(version: String, requirereleaseversion: Boolean): Unit =
     if (requirereleaseversion && version.toUpperCase(java.util.Locale.ROOT).contains("SNAPSHOT"))
