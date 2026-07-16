@@ -42,6 +42,57 @@ private[cozy] trait SbtReviewSubmissionTransport {
   def submit(value: SbtReviewPairedSubmission): Either[String, SbtReviewCanonicalResponse]
 }
 
+private[cozy] trait SbtCbdReviewWireEndpoint {
+  def submit(document: String): Either[String, String]
+}
+
+/** Concrete sbt-side adapter for CBD's transport-neutral submission JSON. */
+private[cozy] final class SbtCbdReviewWireTransport(endpoint: SbtCbdReviewWireEndpoint) extends SbtReviewSubmissionTransport {
+  def submit(value: SbtReviewPairedSubmission): Either[String, SbtReviewCanonicalResponse] =
+    for {
+      target <- _object(value.providers.headOption.map(_.request).getOrElse(""), "target")
+      request = _submission(value, target)
+      response <- endpoint.submit(request)
+      report <- _object(response, "report")
+      gate <- _string(response, "gateResult")
+      _ <- Either.cond(Set("pass", "fail", "unknown").contains(gate), (), "cbd-review-response-gate-invalid")
+    } yield SbtReviewCanonicalResponse(report, gate)
+
+  private def _submission(value: SbtReviewPairedSubmission, target: String): String =
+    s"""{"schemaVersion":"textus.cbd.review-submission.v1","documentType":"provider-document-submission","reviewId":${_quote(value.reviewId)},"target":$target,"providers":[${value.providers.map(_provider).mkString(",")}]}"""
+
+  private def _provider(value: SbtReviewProviderDocuments): String =
+    s"""{"availability":"enabled","descriptor":${_quote(value.descriptor)},"providerRequest":${_quote(value.request)},"bundle":${_quote(value.bundle)}}"""
+
+  private def _quote(value: String): String =
+    "\"" + value.flatMap {
+      case '\\' => "\\\\"; case '\"' => "\\\""; case '\n' => "\\n"; case '\r' => "\\r"; case '\t' => "\\t"; case char => char.toString
+    } + "\""
+
+  private def _string(value: String, key: String): Either[String, String] =
+    ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").r.findFirstMatchIn(value).map(_.group(1)).toRight("cbd-review-response-field-missing")
+
+  private def _object(value: String, key: String): Either[String, String] = {
+    val start = ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*").r.findFirstMatchIn(value).map(_.end).getOrElse(-1)
+    if (start < 0 || start >= value.length || value(start) != '{') Left("cbd-review-response-field-missing")
+    else {
+      val end = value.indices.drop(start).foldLeft((0, false, false, -1)) { case ((depth, quote, escape, found), index) =>
+        if (found >= 0) (depth, quote, escape, found)
+        else {
+          val char = value(index)
+          if (quote) (depth, char == '"' && !escape, char == '\\' && !escape, -1)
+          else if (char == '"') (depth, true, false, -1)
+          else if (char == '{') (depth + 1, false, false, -1)
+          else if (char == '}' && depth == 1) (0, false, false, index)
+          else if (char == '}') (depth - 1, false, false, -1)
+          else (depth, false, false, -1)
+        }
+      }._4
+      if (end >= 0) Right(value.substring(start, end + 1)) else Left("cbd-review-response-field-invalid")
+    }
+  }
+}
+
 private[cozy] final class SbtCozyCommandReviewTransport(commandPrefix: Seq[String]) extends SbtLocalCozyReviewTransport {
   import SbtCozyCommandReviewTransport.MAX_RESPONSE_BYTES
 

@@ -54,6 +54,27 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       Then("sbt-cozy does not invent a local gate result")
       response shouldBe Left("cbd-review-response-incomplete")
     }
+
+    "submit the two provider documents through the CBD wire contract without a workspace field" in {
+      Given("a paired Review submission and a recording CBD wire endpoint")
+      val endpoint = new RecordingWireEndpoint()
+      val transport = new SbtCbdReviewWireTransport(endpoint)
+      val request = "{\"reviewId\":\"review-cozy-001\",\"target\":{\"kind\":\"project\",\"name\":\"fixture\",\"digest\":\"sha256:" + ("a" * 64) + "\"}}"
+      val paired = SbtReviewPairedSubmission("review-cozy-001", Vector(
+        SbtReviewProviderDocuments("cozy", "{\"descriptor\":true}", request, "{\"bundle\":true}"),
+        SbtReviewProviderDocuments("sbt-cozy", "{\"descriptor\":true}", request, "{\"bundle\":true}")
+      ))
+
+      When("sbt-cozy sends the provider documents to CBD")
+      val response = transport.submit(paired).fold(error => fail(error), identity)
+
+      Then("the request has no workspace authority and CBD's canonical result is retained")
+      endpoint.document should include("\"providers\":[")
+      endpoint.document should include("\"target\":{")
+      endpoint.document should not include "workspace"
+      response.report shouldBe "{\"report\":true}"
+      response.gate shouldBe "unknown"
+    }
   }
 
   private final class RecordingCozyTransport extends SbtLocalCozyReviewTransport {
@@ -71,6 +92,15 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
     def submit(value: SbtReviewPairedSubmission): Either[String, SbtReviewCanonicalResponse] = {
       submission = value.providers
       Right(response)
+    }
+  }
+
+  private final class RecordingWireEndpoint extends SbtCbdReviewWireEndpoint {
+    var document = ""
+
+    def submit(value: String): Either[String, String] = {
+      document = value
+      Right("{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"gateResult\":\"unknown\"}")
     }
   }
 }
