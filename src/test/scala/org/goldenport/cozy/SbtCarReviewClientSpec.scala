@@ -13,6 +13,17 @@ import org.scalatest.wordspec.AnyWordSpec
  */
 final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenWhenThen {
   "The sbt-cozy CAR Review client" should {
+    "use fixed Cozy descriptor and stdin-evidence command templates" in {
+      Given("one configured Cozy command prefix")
+      val transport = new SbtCozyCommandReviewTransport(Seq("cozy"))
+
+      When("the local client is asked to collect its provider documents")
+      val outcome = transport.collect(new File("missing-project-root"), "{\"reviewId\":\"review-cozy-001\"}", "0.1.15-SNAPSHOT")
+
+      Then("an invalid root is rejected before any caller-provided command or path reaches CBD")
+      outcome shouldBe Left("cozy-review-project-root-invalid")
+    }
+
     "collect local Cozy evidence and submit only paired provider documents to CBD" in {
       Given("local Cozy evidence, sbt evidence, and a recording CBD submission transport")
       val artifacts = SbtReviewEvidence.render(
