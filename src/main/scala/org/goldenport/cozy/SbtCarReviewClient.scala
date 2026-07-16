@@ -59,8 +59,9 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
     for {
       uri <- _uri(endpoint)
       _ <- Either.cond(document.getBytes(StandardCharsets.UTF_8).length <= MAX_DOCUMENT_BYTES, (), "cbd-review-request-too-large")
-      response <- _post(uri, document)
-    } yield response
+      response <- _post(uri, _envelope(document))
+      canonical <- _field(response, "canonicalResponse")
+    } yield canonical
 
   private def _uri(value: String): Either[String, URI] =
     scala.util.Try(new URI(value)).toOption.filter { uri =>
@@ -103,6 +104,55 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
         new String(output.toByteArray, StandardCharsets.UTF_8)
       } finally input.close()
     }
+
+  private def _envelope(document: String): String =
+    s"""{"submissionDocument":${_quote(document)}}"""
+
+  private def _field(value: String, key: String): Either[String, String] = {
+    val marker = ("\\\"" + java.util.regex.Pattern.quote(key) + "\\\"\\s*:\\s*").r
+    marker.findFirstMatchIn(value).map(_.end).map(_json_string(value, _)).getOrElse(Left("cbd-review-response-envelope-invalid"))
+  }
+
+  private def _json_string(value: String, start: Int): Either[String, String] =
+    if (start >= value.length || value.charAt(start) != '"') Left("cbd-review-response-envelope-invalid")
+    else {
+      val out = new StringBuilder
+      var index = start + 1
+      var closed = false
+      var valid = true
+      while (index < value.length && !closed && valid) {
+        value.charAt(index) match {
+          case '"' => closed = true
+          case '\\' if index + 1 >= value.length => valid = false
+          case '\\' =>
+            index += 1
+            value.charAt(index) match {
+              case 'n' => out.append('\n')
+              case 'r' => out.append('\r')
+              case 't' => out.append('\t')
+              case 'b' => out.append('\b')
+              case 'f' => out.append('\f')
+              case 'u' if index + 4 < value.length =>
+                val code = value.substring(index + 1, index + 5)
+                scala.util.Try(Integer.parseInt(code, 16)).toOption match {
+                  case Some(number) => out.append(number.toChar); index += 4
+                  case None => valid = false
+                }
+              case 'u' => valid = false
+              case char @ ('"' | '\\' | '/') => out.append(char)
+              case _ => valid = false
+            }
+          case char => out.append(char)
+        }
+        index += 1
+      }
+      if (closed && valid) Right(out.toString) else Left("cbd-review-response-envelope-invalid")
+    }
+
+  private def _quote(value: String): String =
+    "\"" + value.flatMap {
+      case '\\' => "\\\\"; case '"' => "\\\""; case '\n' => "\\n"; case '\r' => "\\r"; case '\t' => "\\t"; case char => char.toString
+    } + "\""
 }
 
 private[cozy] object SbtCbdReviewHttpEndpoint {

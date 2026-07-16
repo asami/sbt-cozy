@@ -1,6 +1,10 @@
 package org.goldenport.cozy
 
 import java.io.File
+import java.net.InetSocketAddress
+import java.nio.charset.StandardCharsets
+
+import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
 
 import org.scalatest.GivenWhenThen
 import org.scalatest.matchers.should.Matchers
@@ -90,6 +94,23 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       fileresponse shouldBe Left("cbd-review-endpoint-invalid")
     }
 
+    "send the generated CBD HTTP envelope and unwrap its canonical response" in {
+      Given("a local CBD HTTP gateway that records one request envelope")
+      val canonical = "{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"gateResult\":\"unknown\"}"
+      val gateway = new RecordingHttpGateway(canonical)
+      gateway.start()
+      val endpoint = new SbtCbdReviewHttpEndpoint(gateway.endpoint)
+
+      When("sbt-cozy submits one raw provider-document submission")
+      val response = try endpoint.submit("{\"documentType\":\"provider-document-submission\"}") finally gateway.stop()
+
+      Then("the request uses the generated submission envelope and preserves CBD's raw canonical document")
+      gateway.method shouldBe "POST"
+      gateway.contentType should startWith("application/json")
+      gateway.body should include("\"submissionDocument\":\"{\\\"documentType\\\":\\\"provider-document-submission\\\"}\"")
+      response shouldBe Right(canonical)
+    }
+
     "derive Cozy's provider request from the same sbt target binding" in {
       Given("one sbt-cozy provider request")
       val sbtrequest = SbtReviewEvidence.render(
@@ -134,5 +155,32 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       document = value
       Right("{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"gateResult\":\"unknown\"}")
     }
+  }
+
+  private final class RecordingHttpGateway(canonical: String) {
+    private val _server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+    private var _method = ""
+    private var _contentType = ""
+    private var _body = ""
+
+    _server.createContext("/review", new HttpHandler {
+      def handle(exchange: HttpExchange): Unit = {
+        _method = exchange.getRequestMethod
+        _contentType = Option(exchange.getRequestHeaders.getFirst("Content-Type")).getOrElse("")
+        _body = scala.io.Source.fromInputStream(exchange.getRequestBody, "UTF-8").mkString
+        val escaped = canonical.replace("\\", "\\\\").replace("\"", "\\\"")
+        val response = ("{\"canonicalResponse\":\"" + escaped + "\"}").getBytes(StandardCharsets.UTF_8)
+        exchange.getResponseHeaders.set("Content-Type", "application/json")
+        exchange.sendResponseHeaders(200, response.length)
+        try exchange.getResponseBody.write(response) finally exchange.close()
+      }
+    })
+
+    def endpoint: String = s"http://127.0.0.1:${_server.getAddress.getPort}/review"
+    def method: String = _method
+    def contentType: String = _contentType
+    def body: String = _body
+    def start(): Unit = _server.start()
+    def stop(): Unit = _server.stop(0)
   }
 }
