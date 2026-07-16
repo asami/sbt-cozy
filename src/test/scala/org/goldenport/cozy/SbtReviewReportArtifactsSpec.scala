@@ -67,6 +67,18 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
       result shouldBe Left("cbd-review-attestation-binding-invalid")
     }
 
+    "accept the same provider bindings when the report and attestation order them differently" in {
+      Given("a canonical report and attestation that bind Cozy and sbt-cozy in different orders")
+      val report = _with_execution_providers(_report, Vector(_cozy_provider, _sbt_provider))
+      val attestation = _with_attestation_providers(Vector(_sbt_provider, _cozy_provider))
+
+      When("CBD returns the canonical response")
+      val result = SbtReviewReportArtifacts.render(SbtReviewCanonicalResponse(report, "fail", Some(attestation)))
+
+      Then("sbt-cozy accepts the equivalent provider-binding set")
+      result.isRight shouldBe true
+    }
+
     "refuse a canonical response containing a credential-shaped value" in {
       Given("a report whose provider message contains a bearer credential")
 
@@ -85,6 +97,8 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
   private val _report =
     """{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-report","reportId":"report-example","reportDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reviewId":"review-example","profile":"development","target":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"execution":{"providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"},"bundleDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]},"gate":{"result":"fail"},"observations":[{"id":"finding-location","type":"finding","rule":{"id":"cozy.car.documentation-rationale"},"message":"<unsafe>","severity":"medium","locations":[{"path":"project.yaml","line":12}]},{"id":"missing-location","type":"finding","rule":{"id":"cozy.car.missing-location"},"message":"No location","severity":"low","locations":[]}]}"""
   private val _attestation = _attestation_for("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  private val _cozy_provider = parse(_report).fold(error => fail(error.getMessage), identity).hcursor.downField("execution").downField("providers").as[Vector[io.circe.Json]].fold(error => fail(error.getMessage), _.head)
+  private val _sbt_provider = parse("""{"provider":{"id":"sbt-cozy","version":"0.1.0-SNAPSHOT"},"ruleSet":{"id":"sbt-cozy.build-evidence","version":"1.0.0"},"bundleDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}""").fold(error => fail(error.getMessage), identity)
 
   private def _attestation_for(reportdigest: String): String = {
     val base = parse(
@@ -93,5 +107,19 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
     val bytes = Printer.noSpaces.copy(sortKeys = true).print(base).getBytes(StandardCharsets.UTF_8)
     val digest = MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
     Printer.noSpaces.print(base.mapObject(_.add("attestationDigest", io.circe.Json.fromString(s"sha256:$digest"))))
+  }
+
+  private def _with_execution_providers(document: String, providers: Vector[io.circe.Json]): String = {
+    val parsed = parse(document).fold(error => fail(error.getMessage), identity)
+    val execution = parsed.hcursor.downField("execution").focus.fold(fail("execution is missing"))(identity)
+    Printer.noSpaces.print(parsed.mapObject(_.add("execution", execution.mapObject(_.add("providers", io.circe.Json.fromValues(providers))))))
+  }
+
+  private def _with_attestation_providers(providers: Vector[io.circe.Json]): String = {
+    val parsed = parse(_attestation).fold(error => fail(error.getMessage), identity)
+    val unsigned = parsed.mapObject(_.remove("attestationDigest").add("providers", io.circe.Json.fromValues(providers)))
+    val bytes = Printer.noSpaces.copy(sortKeys = true).print(unsigned).getBytes(StandardCharsets.UTF_8)
+    val digest = MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
+    Printer.noSpaces.print(unsigned.mapObject(_.add("attestationDigest", io.circe.Json.fromString(s"sha256:$digest"))))
   }
 }

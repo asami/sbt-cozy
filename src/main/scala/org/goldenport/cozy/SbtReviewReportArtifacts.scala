@@ -102,8 +102,8 @@ private[cozy] object SbtReviewReportArtifacts {
     val sameidentities = identities.forall(key => _string(report, key).exists(value => _string(attestation, key).contains(value)))
     val sametarget = _string(report.hcursor.downField("target").focus.getOrElse(Json.Null), "digest").exists(value => _string(attestation, "targetDigest").contains(value))
     val samegate = attestation.hcursor.downField("gate").focus.contains(report.hcursor.downField("gate").focus.getOrElse(Json.Null)) && _string(attestation.hcursor.downField("gate").focus.getOrElse(Json.Null), "result").contains(gate)
-    val reportproviders = report.hcursor.downField("execution").downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding)
-    val attestedproviders = attestation.hcursor.downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding)
+    val reportproviders = report.hcursor.downField("execution").downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding).sorted
+    val attestedproviders = attestation.hcursor.downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding).sorted
     val attestationdigest = _string(attestation, "attestationDigest")
     val expecteddigest = _digest(attestation.mapObject(_.remove("attestationDigest")))
     if (!validstructure) Left("cbd-review-attestation-structure-invalid")
