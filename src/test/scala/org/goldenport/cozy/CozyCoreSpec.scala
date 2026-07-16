@@ -395,6 +395,53 @@ final class CozyWebDescriptorSyncSpec extends CozyTestBase {
     }
   }
 
+  test("inserts generated form entries before a later top-level descriptor section") {
+    withTempDir("sbt-cozy-web-descriptor-section-order") { dir =>
+      val cml = write(
+        dir / "src" / "main" / "cozy" / "sample.cml",
+        """# SERVICE
+          |
+          |## Review
+          |
+          |### OPERATION
+          |
+          |#### getRun
+          |
+          |##### WEB
+          |
+          |- form :: true
+          |
+          |- type :: QUERY
+          |- input :: GetRun
+          |- output :: Result
+          |""".stripMargin
+      )
+      write(
+        dir / "src" / "main" / "web-inf" / "form.yaml",
+        """form:
+          |  sample.review.existing:
+          |    enabled: true
+          |admin:
+          |  entity.example:
+          |    count: optional
+          |""".stripMargin
+      )
+
+      CozyWebDescriptorSync.sync(
+        projectdir = dir,
+        componentname = "sample",
+        cozyfiles = Seq(cml),
+        log = sbt.util.Logger.Null
+      )
+
+      val descriptor = IO.read(dir / "src" / "main" / "web-inf" / "form.yaml")
+      val generated = descriptor.indexOf("sample.review.get-run:")
+      val admin = descriptor.indexOf("admin:")
+      assert(generated >= 0)
+      assert(admin > generated)
+    }
+  }
+
   test("service form opt-in keeps existing hand-tuned entries until operation is explicitly generated") {
     withTempDir("sbt-cozy-web-descriptor-service-transition") { dir =>
       val cml = write(

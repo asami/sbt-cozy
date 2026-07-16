@@ -1652,7 +1652,20 @@ private[cozy] object CozyWebDescriptorSync {
     val withdefault = _sync_default(base, model)
     val withform = if (withdefault.linesIterator.exists(_.trim == "form:")) withdefault else withdefault + "form:\n"
     val generatedtext = generated.toVector.sortBy(_._1).map(_._2.stripSuffix("\n")).mkString("\n")
-    (withform.stripSuffix("\n") + "\n" + generatedtext).stripSuffix("\n") + "\n"
+    _insert_form_entries(withform, generatedtext)
+  }
+
+  private def _insert_form_entries(current: String, entries: String): String = {
+    val lines = current.stripSuffix("\n").linesIterator.toVector
+    val formindex = lines.indexWhere(_.trim == "form:")
+    if (formindex < 0) (current.stripSuffix("\n") + "\n" + entries).stripSuffix("\n") + "\n"
+    else {
+      val end = (formindex + 1 until lines.size).find { index =>
+        val line = lines(index)
+        line.trim.nonEmpty && !line.startsWith(" ")
+      }.getOrElse(lines.size)
+      (lines.take(end) ++ Vector(entries) ++ lines.drop(end)).mkString("\n").stripSuffix("\n") + "\n"
+    }
   }
 
   private def _operation_block(componentname: String, op: OperationForm, model: Model): (String, String) = {
