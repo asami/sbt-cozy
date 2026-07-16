@@ -1,7 +1,10 @@
 package org.goldenport.cozy
 
 import java.nio.file.Files
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
+import io.circe.Printer
 import io.circe.parser.parse
 import org.scalatest.GivenWhenThen
 import org.scalatest.matchers.should.Matchers
@@ -57,16 +60,38 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
       val result = SbtReviewReportArtifacts.render(SbtReviewCanonicalResponse(
         _report,
         "fail",
-        Some(_attestation.replace("sha256:aaaaaaaa", "sha256:dddddddd"))
+        Some(_attestation_for("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"))
       ))
 
       Then("CI does not retain a drifting attestation")
       result shouldBe Left("cbd-review-attestation-binding-invalid")
     }
+
+    "refuse a canonical response containing a credential-shaped value" in {
+      Given("a report whose provider message contains a bearer credential")
+
+      When("the client attempts to materialize review artifacts")
+      val result = SbtReviewReportArtifacts.render(SbtReviewCanonicalResponse(
+        _report.replace("<unsafe>", "Bearer secret-value-1234567890123456"),
+        "fail",
+        Some(_attestation)
+      ))
+
+      Then("no report, HTML, SARIF, or attestation artifact is retained")
+      result shouldBe Left("cbd-review-artifact-sensitive-value")
+    }
   }
 
   private val _report =
     """{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-report","reportId":"report-example","reportDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reviewId":"review-example","profile":"development","target":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"execution":{"providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"},"bundleDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]},"gate":{"result":"fail"},"observations":[{"id":"finding-location","type":"finding","rule":{"id":"cozy.car.documentation-rationale"},"message":"<unsafe>","severity":"medium","locations":[{"path":"project.yaml","line":12}]},{"id":"missing-location","type":"finding","rule":{"id":"cozy.car.missing-location"},"message":"No location","severity":"low","locations":[]}]}"""
-  private val _attestation =
-    """{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-attestation","attestationId":"attestation-example","reviewId":"review-example","reportId":"report-example","reportDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","targetDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","profile":"development","providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"},"bundleDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"gate":{"result":"fail"}}"""
+  private val _attestation = _attestation_for("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+  private def _attestation_for(reportdigest: String): String = {
+    val base = parse(
+      s"""{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-attestation","attestationId":"attestation-example","createdAt":"2026-07-16T00:00:00Z","reviewId":"review-example","reportId":"report-example","reportDigest":"$reportdigest","targetDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","profile":"development","providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"},"bundleDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"gate":{"result":"fail"}}"""
+    ).fold(error => fail(error.getMessage), identity)
+    val bytes = Printer.noSpaces.copy(sortKeys = true).print(base).getBytes(StandardCharsets.UTF_8)
+    val digest = MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
+    Printer.noSpaces.print(base.mapObject(_.add("attestationDigest", io.circe.Json.fromString(s"sha256:$digest"))))
+  }
 }

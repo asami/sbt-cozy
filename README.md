@@ -88,6 +88,9 @@ Tasks:
 
 - `cozyReviewEvidenceDir`: provider-owned sbt evidence directory (default:
   `target/cbd-review/sbt-cozy`)
+- `cozyReviewCiPolicy`: resolved Review execution policy. In standard CI it
+  admits only the local deterministic `cozy` and `sbt-cozy` providers and a
+  loopback CBD gateway by default.
 - `cozyReviewSbtEvidence`: write deterministic descriptor, request, and evidence
   bundle documents without deriving a quality assessment or gate
 - `cozyReviewCbdEndpoint`: optional CBD Review HTTP gateway, read by default from
@@ -108,6 +111,18 @@ headers, redirects, non-JSON responses, and oversized exchanges are rejected.
 `review.cbd.role` is only for a local development server using its explicit
 fallback role; production endpoints must use their configured authentication
 boundary rather than this setting.
+
+Standard CI is selected by `CI=true` or by
+`review.ci.profile: standard`. It is offline by default: a non-loopback CBD
+gateway is rejected, as are future external and AI Review providers. A project
+may opt in explicitly with the boolean settings
+`review.ci.network_gateway_enabled`,
+`review.ci.external_providers_enabled`, and
+`review.ci.ai_providers_enabled`; these are deliberately separate so a network
+gateway does not silently enable a cost-bearing provider. Before a CBD response
+is written, sbt-cozy verifies the CBD attestation digest and rejects credential
+field names or credential-shaped values, so Review artifacts never become a
+secret transport.
 
 All Review artifacts are emitted under `cozyReviewEvidenceDir`. The JSON is
 the unmodified canonical report and attestation inside a deterministic artifact

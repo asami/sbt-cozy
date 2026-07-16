@@ -1,6 +1,8 @@
 package org.goldenport.cozy
 
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 import io.circe.{Json, JsonObject, Printer}
 import io.circe.parser.parse
@@ -38,6 +40,8 @@ private[cozy] object SbtReviewReportArtifacts {
       report <- parse(response.report).left.map(_ => "cbd-review-canonical-report-invalid")
       attestationText <- response.attestation.toRight("cbd-review-canonical-attestation-missing")
       attestation <- parse(attestationText).left.map(_ => "cbd-review-canonical-attestation-invalid")
+      _ <- _safe_artifact(report)
+      _ <- _safe_artifact(attestation)
       gate <- _gate(report, response.gate)
       _ <- _validate_attestation(report, attestation, gate)
       findings <- _findings(report)
@@ -89,15 +93,53 @@ private[cozy] object SbtReviewReportArtifacts {
     )
 
   private def _validate_attestation(report: Json, attestation: Json, gate: String): Either[String, Unit] = {
+    val validstructure =
+      _string(attestation, "schemaVersion").contains("textus.cbd.review-report.v1") &&
+        _string(attestation, "documentType").contains("review-attestation") &&
+        _string(attestation, "attestationId").exists(_.nonEmpty) &&
+        _string(attestation, "createdAt").exists(_.nonEmpty)
     val identities = Vector("reviewId", "reportId", "reportDigest", "profile")
     val sameidentities = identities.forall(key => _string(report, key).exists(value => _string(attestation, key).contains(value)))
     val sametarget = _string(report.hcursor.downField("target").focus.getOrElse(Json.Null), "digest").exists(value => _string(attestation, "targetDigest").contains(value))
     val samegate = attestation.hcursor.downField("gate").focus.contains(report.hcursor.downField("gate").focus.getOrElse(Json.Null)) && _string(attestation.hcursor.downField("gate").focus.getOrElse(Json.Null), "result").contains(gate)
     val reportproviders = report.hcursor.downField("execution").downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding)
     val attestedproviders = attestation.hcursor.downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding)
-    if (!sameidentities || !sametarget || !samegate) Left("cbd-review-attestation-binding-invalid")
+    val attestationdigest = _string(attestation, "attestationDigest")
+    val expecteddigest = _digest(attestation.mapObject(_.remove("attestationDigest")))
+    if (!validstructure) Left("cbd-review-attestation-structure-invalid")
+    else if (!sameidentities || !sametarget || !samegate) Left("cbd-review-attestation-binding-invalid")
     else if (reportproviders.isEmpty || reportproviders != attestedproviders) Left("cbd-review-attestation-providers-invalid")
+    else if (!attestationdigest.contains(expecteddigest)) Left("cbd-review-attestation-digest-invalid")
     else Right(())
+  }
+
+  private def _safe_artifact(value: Json): Either[String, Unit] =
+    if (_contains_sensitive_field(value)) Left("cbd-review-artifact-sensitive-field")
+    else if (_contains_sensitive_value(value)) Left("cbd-review-artifact-sensitive-value")
+    else Right(())
+
+  private def _contains_sensitive_field(value: Json): Boolean =
+    value.asObject.exists(_.toMap.exists { case (key, nested) =>
+      _sensitive_field(key) || _contains_sensitive_field(nested)
+    }) || value.asArray.exists(_.exists(_contains_sensitive_field))
+
+  private def _contains_sensitive_value(value: Json): Boolean =
+    value.asString.exists { text =>
+      val normalized = text.toLowerCase(java.util.Locale.ROOT)
+      normalized.matches(".*(bearer|basic)\\s+[a-z0-9._~+/-]+.*") ||
+        normalized.matches(".*(?:api[_-]?key|password|secret|token)\\s*=.*") ||
+        text.matches(".*AKIA[0-9A-Z]{16}.*") || text.matches(".*sk-[A-Za-z0-9_-]{16,}.*")
+    } || value.asObject.exists(_.values.exists(_contains_sensitive_value)) || value.asArray.exists(_.exists(_contains_sensitive_value))
+
+  private def _sensitive_field(value: String): Boolean = {
+    val normalized = value.toLowerCase(java.util.Locale.ROOT).replace("_", "").replace("-", "")
+    Set("authorization", "cookie", "credential", "credentials", "password", "secret", "token", "apikey", "accesstoken", "refreshtoken").contains(normalized)
+  }
+
+  private def _digest(value: Json): String = {
+    val bytes = Printer.noSpaces.copy(sortKeys = true).print(value).getBytes(StandardCharsets.UTF_8)
+    val digest = MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
+    s"sha256:$digest"
   }
 
   private def _provider_binding(value: Json): Option[String] =

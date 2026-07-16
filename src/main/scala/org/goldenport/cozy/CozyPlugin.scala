@@ -234,6 +234,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyIndexWarehouse = taskKey[File]("Generate publish.d artifact and release metadata by indexing the warehouse")
     val cozyPublishCoursierChannel = taskKey[File]("Publish configured Coursier channel entries to the warehouse")
     val cozyReviewEvidenceDir = settingKey[File]("Directory for provider-owned sbt CAR Review evidence documents")
+    val cozyReviewCiPolicy = settingKey[SbtReviewCiPolicy]("Resolved deterministic/offline execution policy for CAR Review")
     val cozyReviewSbtEvidence = taskKey[File]("Emit deterministic sbt-cozy Review Provider descriptor, request, and task evidence bundle")
     val cozyReviewCbdEndpoint = settingKey[Option[String]]("Explicit private CBD Review HTTP gateway endpoint")
     val cozyReviewCbdRole = settingKey[Option[String]]("Development-only CBD Review role header: reviewer, operator, or admin")
@@ -322,6 +323,7 @@ object CozyPlugin extends AutoPlugin {
     cozyCoursierChannelPath := cozyProjectConfig.value.value("coursier.channel.path").getOrElse("repository/cozy/coursier-channel.json"),
     cozyCoursierChannelEntries := Seq.empty,
     cozyReviewEvidenceDir := target.value / "cbd-review" / "sbt-cozy",
+    cozyReviewCiPolicy := SbtReviewCiPolicy.resolve(cozyProjectConfig.value, sys.env).fold(error => sys.error(s"[sbt-cozy] $error"), identity),
     cozyReviewCbdEndpoint := cozyProjectConfig.value.value("review.cbd.endpoint"),
     cozyReviewCbdRole := cozyProjectConfig.value.value("review.cbd.role"),
     cozyGenerate := {
@@ -867,6 +869,7 @@ object CozyPlugin extends AutoPlugin {
 
     cozyReviewSubmit := {
       val endpoint = cozyReviewCbdEndpoint.value.getOrElse(sys.error("[sbt-cozy] configure review.cbd.endpoint before cozyReviewSubmit"))
+      cozyReviewCiPolicy.value.validateEndpoint(endpoint).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
       val directory = cozyReviewEvidenceDir.value
       val _ = cozyReviewSbtEvidence.value
       val artifacts = SbtReviewEvidenceArtifacts(
