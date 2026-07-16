@@ -61,6 +61,26 @@ final class CozyPublishVersionPolicySpec extends CozyTestBase {
     assert(error.getMessage.contains("sar"))
   }
 
+  test("review-gated tasks are explicit aliases and never replace standard publication labels") {
+    assert(CozyPlugin.reviewGatedTaskLabel("car", "publish") == "cozyPublishCar")
+    assert(CozyPlugin.reviewGatedTaskLabel("sar", "publish") == "cozyPublishSar")
+    assert(CozyPlugin.reviewGatedTaskLabel("car", "distribute") == "cozyDistributeCar")
+    assert(CozyPlugin.reviewGatedTaskLabel("sar", "distribute") == "cozyDistributeSar")
+    assert(CozyPlugin.publishTaskLabel("car", local = false) == "cozyPublishCar")
+  }
+
+  test("review-gated tasks reject unsupported publication and operation kinds") {
+    val packaging = intercept[RuntimeException] {
+      CozyPlugin.reviewGatedTaskLabel("jar", "publish")
+    }
+    val operation = intercept[RuntimeException] {
+      CozyPlugin.reviewGatedTaskLabel("car", "deploy")
+    }
+
+    assert(packaging.getMessage.contains("review-gated publish"))
+    assert(operation.getMessage.contains("invalid review-gated operation"))
+  }
+
   test("release publish tasks accept release versions") {
     CozyPlugin.validatePublishVersion("0.1.2", "cozyPublishCar", expectsnapshot = false)
     CozyPlugin.validatePublishVersion("0.1.2", "cozyPublishSar", expectsnapshot = false)

@@ -244,6 +244,8 @@ object CozyPlugin extends AutoPlugin {
     val cozyReviewReportHtml = taskKey[File]("Write the deterministic HTML projection of the canonical Review report")
     val cozyReviewReportSarif = taskKey[File]("Write the lossy location-bearing Finding SARIF projection")
     val cozyReviewGate = taskKey[Unit]("Fail unless the CBD-owned canonical Review gate passes")
+    val cozyReviewPublish = taskKey[File]("Explicitly require a passing CBD Review before release publication")
+    val cozyReviewDistribute = taskKey[File]("Explicitly require a passing CBD Review before release distribution")
   }
 
   import autoImport._
@@ -920,6 +922,20 @@ object CozyPlugin extends AutoPlugin {
       if (gate != "pass") sys.error(s"[sbt-cozy] CBD Review gate did not pass: $gate")
     },
 
+    cozyReviewPublish := Def.taskDyn[File] {
+      reviewGatedTaskLabel(cozyPackaging.value, "publish") match {
+        case "cozyPublishCar" => Def.task { val _ = cozyReviewGate.value; cozyPublishCar.value }
+        case "cozyPublishSar" => Def.task { val _ = cozyReviewGate.value; cozyPublishSar.value }
+      }
+    }.value,
+
+    cozyReviewDistribute := Def.taskDyn[File] {
+      reviewGatedTaskLabel(cozyPackaging.value, "distribute") match {
+        case "cozyDistributeCar" => Def.task { val _ = cozyReviewGate.value; cozyDistributeCar.value }
+        case "cozyDistributeSar" => Def.task { val _ = cozyReviewGate.value; cozyDistributeSar.value }
+      }
+    }.value,
+
     Compile / sourceGenerators += cozyGenerate.taskValue
   )
 
@@ -985,6 +1001,16 @@ object CozyPlugin extends AutoPlugin {
       case "car" => if (local) "cozyPublishLocalCar" else "cozyPublishCar"
       case "sar" => if (local) "cozyPublishLocalSar" else "cozyPublishSar"
       case other => sys.error(s"[sbt-cozy] invalid cozyPackaging '${other}'. expected 'car' or 'sar'")
+    }
+
+  private[cozy] def reviewGatedTaskLabel(packaging: String, operation: String): String =
+    (packaging.trim.toLowerCase(java.util.Locale.ROOT), operation) match {
+      case ("car", "publish") => "cozyPublishCar"
+      case ("sar", "publish") => "cozyPublishSar"
+      case ("car", "distribute") => "cozyDistributeCar"
+      case ("sar", "distribute") => "cozyDistributeSar"
+      case (_, "publish" | "distribute") => sys.error(s"[sbt-cozy] review-gated ${operation} requires cozyPackaging 'car' or 'sar'")
+      case _ => sys.error(s"[sbt-cozy] invalid review-gated operation '$operation'")
     }
 
   private[cozy] def publicationPath(config: CozyProjectConfig, projectmetadata: CozyProjectConfig): Option[String] =

@@ -104,6 +104,10 @@ Tasks:
 - `cozyReviewReportHtml`: write `canonical-report.html`
 - `cozyReviewReportSarif`: write `canonical-report.sarif`
 - `cozyReviewGate`: fail the sbt task unless CBD's canonical gate is `pass`
+- `cozyReviewPublish`: explicitly run `cozyReviewGate` before the selected
+  release CAR/SAR publication task
+- `cozyReviewDistribute`: explicitly run `cozyReviewGate` before the selected
+  release CAR/SAR distribution task
 
 The HTTP request is the generated CBD outer envelope with a single
 `submissionDocument` JSON-string member. URL user information, arbitrary
@@ -131,6 +135,13 @@ projection containing only location-bearing Findings. sbt-cozy verifies that
 the CBD attestation binds the canonical report, target, profile, provider/rule
 set identities, and gate before writing it. No sbt task recomputes a report,
 Finding, Assessment, attestation, or gate.
+
+`cozyReviewPublish` and `cozyReviewDistribute` are the only publication or
+distribution routes coupled to a Review. They first require a CBD-owned passing
+attestation through `cozyReviewGate`, then invoke the ordinary CAR/SAR release
+task selected by `cozyPackaging`. They are explicit opt-ins: `publish`,
+`cozyPublishCar`, `cozyPublishSar`, `cozyDistributeCar`, and
+`cozyDistributeSar` retain their existing behavior and never trigger a Review.
 
 ## Backend Modes
 
