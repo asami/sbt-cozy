@@ -94,29 +94,12 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       fileresponse shouldBe Left("cbd-review-endpoint-invalid")
     }
 
-    "admit only a declared Review role for local development gateway execution" in {
-      Given("one valid, one invalid, and one non-loopback configured Review role")
-      val valid = new SbtCbdReviewHttpEndpoint("http://127.0.0.1:1/review", reviewRole = Some("reviewer"))
-      val invalid = new SbtCbdReviewHttpEndpoint("http://127.0.0.1:1/review", reviewRole = Some("viewer"))
-      val remote = new SbtCbdReviewHttpEndpoint("https://cbd.example/review", reviewRole = Some("reviewer"))
-
-      When("the clients validate their configured role before the HTTP exchange")
-      val validresponse = valid.submit("{}")
-      val invalidresponse = invalid.submit("{}")
-      val remoteresponse = remote.submit("{}")
-
-      Then("only a submission role on a loopback endpoint is accepted")
-      validresponse shouldBe Left("cbd-review-http-request-failed")
-      invalidresponse shouldBe Left("cbd-review-role-invalid")
-      remoteresponse shouldBe Left("cbd-review-role-loopback-required")
-    }
-
     "send the generated CBD HTTP envelope and unwrap its canonical response" in {
       Given("a local CBD HTTP gateway that records one request envelope")
       val canonical = "{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"attestation\":{\"attestation\":true},\"gateResult\":\"unknown\"}"
       val gateway = new RecordingHttpGateway(canonical)
       gateway.start()
-      val endpoint = new SbtCbdReviewHttpEndpoint(gateway.endpoint, reviewRole = Some("reviewer"))
+      val endpoint = new SbtCbdReviewHttpEndpoint(gateway.endpoint)
 
       When("sbt-cozy submits one raw provider-document submission")
       val response = try endpoint.submit("{\"documentType\":\"provider-document-submission\"}") finally gateway.stop()
@@ -124,7 +107,6 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       Then("the request uses the generated submission envelope and preserves CBD's raw canonical document")
       gateway.method shouldBe "POST"
       gateway.contentType should startWith("application/json")
-      gateway.role shouldBe "reviewer"
       gateway.body should include("\"submissionDocument\":\"{\\\"documentType\\\":\\\"provider-document-submission\\\"}\"")
       response shouldBe Right(canonical)
     }
@@ -133,7 +115,7 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       Given("a loopback gateway whose response carries an undeclared envelope field")
       val gateway = new RecordingHttpGateway("{\"documentType\":\"canonical-review-response\"}", extraField = true)
       gateway.start()
-      val endpoint = new SbtCbdReviewHttpEndpoint(gateway.endpoint, reviewRole = Some("reviewer"))
+      val endpoint = new SbtCbdReviewHttpEndpoint(gateway.endpoint)
 
       When("sbt-cozy receives a non-generated CBD response shape")
       val response = try endpoint.submit("{\"documentType\":\"provider-document-submission\"}") finally gateway.stop()
@@ -211,19 +193,17 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
   private final class RecordingHttpGateway(canonical: String, extraField: Boolean = false) {
     private val _server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
     private var _method = ""
-    private var _contentType = ""
-    private var _role = ""
+    private var _content_type = ""
     private var _body = ""
 
     _server.createContext("/review", new HttpHandler {
       def handle(exchange: HttpExchange): Unit = {
         _method = exchange.getRequestMethod
-        _contentType = Option(exchange.getRequestHeaders.getFirst("Content-Type")).getOrElse("")
-        _role = Option(exchange.getRequestHeaders.getFirst("role")).getOrElse("")
+        _content_type = Option(exchange.getRequestHeaders.getFirst("Content-Type")).getOrElse("")
         _body = scala.io.Source.fromInputStream(exchange.getRequestBody, "UTF-8").mkString
         val escaped = canonical.replace("\\", "\\\\").replace("\"", "\\\"")
         val suffix = if (extraField) ",\"unexpected\":true" else ""
-        val response = ("{\"canonicalResponse\":\"" + escaped + "\"" + suffix + "}").getBytes(StandardCharsets.UTF_8)
+        val response = ("{\"canonical_response\":\"" + escaped + "\"" + suffix + "}").getBytes(StandardCharsets.UTF_8)
         exchange.getResponseHeaders.set("Content-Type", "application/json")
         exchange.sendResponseHeaders(200, response.length)
         try exchange.getResponseBody.write(response) finally exchange.close()
@@ -232,8 +212,7 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
 
     def endpoint: String = s"http://127.0.0.1:${_server.getAddress.getPort}/review"
     def method: String = _method
-    def contentType: String = _contentType
-    def role: String = _role
+    def contentType: String = _content_type
     def body: String = _body
     def start(): Unit = _server.start()
     def stop(): Unit = _server.stop(0)

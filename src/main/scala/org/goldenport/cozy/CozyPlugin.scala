@@ -237,7 +237,6 @@ object CozyPlugin extends AutoPlugin {
     val cozyReviewCiPolicy = settingKey[SbtReviewCiPolicy]("Resolved deterministic/offline execution policy for CAR Review")
     val cozyReviewSbtEvidence = taskKey[File]("Emit deterministic sbt-cozy Review Provider descriptor, request, and task evidence bundle")
     val cozyReviewCbdEndpoint = settingKey[Option[String]]("Explicit private CBD Review HTTP gateway endpoint")
-    val cozyReviewCbdRole = settingKey[Option[String]]("Development-only CBD Review role header: reviewer, operator, or admin")
     val cozyReviewCozyProviderVersion = settingKey[Option[String]]("Explicit Cozy Review provider runtime version recorded in the provider descriptor and bundle")
     val cozyReviewSubmit = taskKey[File]("Collect local Cozy and sbt evidence, then submit it to the configured CBD Review gateway")
     val cozyReviewCanonicalJson = taskKey[File]("Write the CBD-owned canonical Review response JSON artifact")
@@ -328,7 +327,6 @@ object CozyPlugin extends AutoPlugin {
     cozyReviewEvidenceDir := target.value / "cbd-review" / "sbt-cozy",
     cozyReviewCiPolicy := SbtReviewCiPolicy.resolve(cozyProjectConfig.value, sys.env).fold(error => sys.error(s"[sbt-cozy] $error"), identity),
     cozyReviewCbdEndpoint := cozyProjectConfig.value.value("review.cbd.endpoint"),
-    cozyReviewCbdRole := cozyProjectConfig.value.value("review.cbd.role"),
     cozyReviewCozyProviderVersion :=
       cozyProjectConfig.value.value("review.cozy.provider_version")
         .orElse(cozyProjectMetadata.value.value("review.cozy.provider_version")),
@@ -890,7 +888,7 @@ object CozyPlugin extends AutoPlugin {
         cozyReviewCozyProviderVersion.value.getOrElse(sys.error("[sbt-cozy] configure review.cozy.provider_version before cozyReviewSubmit")),
         artifacts,
         new SbtCozyCommandReviewTransport(cozyDelegateCommand.value),
-        new SbtCbdReviewWireTransport(new SbtCbdReviewHttpEndpoint(endpoint, reviewRole = cozyReviewCbdRole.value))
+        new SbtCbdReviewWireTransport(new SbtCbdReviewHttpEndpoint(endpoint))
       ).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
       val outputs = SbtReviewReportArtifacts.write(directory, response).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
       streams.value.log.info(s"[sbt-cozy] wrote CBD canonical Review response: ${outputs.canonicalJson.getAbsolutePath}")

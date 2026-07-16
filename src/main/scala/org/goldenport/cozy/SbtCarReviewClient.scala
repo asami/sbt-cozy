@@ -55,17 +55,15 @@ private[cozy] trait SbtCbdReviewWireEndpoint {
 /** Fixed JSON-over-HTTP implementation for an explicitly configured CBD gateway. */
 private[cozy] final class SbtCbdReviewHttpEndpoint(
   endpoint: String,
-  timeoutMillis: Int = 30000,
-  reviewRole: Option[String] = None
+  timeoutMillis: Int = 30000
 ) extends SbtCbdReviewWireEndpoint {
   import SbtCbdReviewHttpEndpoint.MAX_DOCUMENT_BYTES
 
   def submit(document: String): Either[String, String] =
     for {
       uri <- _uri(endpoint)
-      role <- _role(uri, reviewRole)
       _ <- Either.cond(document.getBytes(StandardCharsets.UTF_8).length <= MAX_DOCUMENT_BYTES, (), "cbd-review-request-too-large")
-      response <- _post(uri, _envelope(document), role)
+      response <- _post(uri, _envelope(document))
       canonical <- _canonical_response(response)
     } yield canonical
 
@@ -75,18 +73,7 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
         uri.getHost != null && uri.getRawUserInfo == null && uri.getRawQuery == null && uri.getRawFragment == null
     }.toRight("cbd-review-endpoint-invalid")
 
-  private def _role(uri: URI, value: Option[String]): Either[String, Option[String]] =
-    value.map(_.trim.toLowerCase(java.util.Locale.ROOT)).filter(_.nonEmpty) match {
-      case Some(role) if !Set("reviewer", "operator", "admin").contains(role) => Left("cbd-review-role-invalid")
-      case Some(_) if !_is_loopback(uri) => Left("cbd-review-role-loopback-required")
-      case Some(role) => Right(Some(role))
-      case None => Right(None)
-    }
-
-  private def _is_loopback(uri: URI): Boolean =
-    Set("127.0.0.1", "::1", "localhost").contains(Option(uri.getHost).getOrElse("").toLowerCase(java.util.Locale.ROOT))
-
-  private def _post(uri: URI, document: String, role: Option[String]): Either[String, String] =
+  private def _post(uri: URI, document: String): Either[String, String] =
     try {
       val connection = uri.toURL.openConnection().asInstanceOf[HttpURLConnection]
       connection.setRequestMethod("POST")
@@ -96,7 +83,6 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
       connection.setDoOutput(true)
       connection.setRequestProperty("Content-Type", "application/json")
       connection.setRequestProperty("Accept", "application/json")
-      role.foreach(connection.setRequestProperty("role", _))
       val output = connection.getOutputStream
       try output.write(document.getBytes(StandardCharsets.UTF_8)) finally output.close()
       val status = connection.getResponseCode
@@ -129,8 +115,8 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
   private def _canonical_response(value: String): Either[String, String] =
     parse(value).toOption
       .flatMap(_.asObject)
-      .filter(_.keys.toSet == Set("canonicalResponse"))
-      .flatMap(_("canonicalResponse").flatMap(_.asString).filter(_.nonEmpty))
+      .filter(_.keys.toSet == Set("canonical_response"))
+      .flatMap(_("canonical_response").flatMap(_.asString).filter(_.nonEmpty))
       .toRight("cbd-review-response-envelope-invalid")
 
   private def _quote(value: String): String =

@@ -95,8 +95,6 @@ Tasks:
   bundle documents without deriving a quality assessment or gate
 - `cozyReviewCbdEndpoint`: optional CBD Review HTTP gateway, read by default from
   `.cozy/config.yaml` `review.cbd.endpoint`
-- `cozyReviewCbdRole`: optional development-loopback submission role, read from
-  `review.cbd.role`; only `reviewer`, `operator`, or `admin` are admitted
 - `cozyReviewCozyProviderVersion`: required Cozy runtime version recorded in
   the local Cozy provider descriptor and bundle, read from
   `review.cozy.provider_version`; it is deliberately not inferred from the
@@ -114,11 +112,11 @@ Tasks:
   release CAR/SAR distribution task
 
 The HTTP request is the generated CBD outer envelope with a single
-`submissionDocument` JSON-string member. URL user information, arbitrary
-headers, redirects, non-JSON responses, and oversized exchanges are rejected.
-`review.cbd.role` is only for a local development server using its explicit
-fallback role; production endpoints must use their configured authentication
-boundary rather than this setting.
+`submissionDocument` JSON-string member. URL user information, caller-supplied
+authorization headers, redirects, non-JSON responses, and oversized exchanges
+are rejected. The configured CBD deployment owns authentication and maps a
+trusted installation identity or a real authenticated principal to Review
+authority; the sbt client never supplies a role or credential.
 
 Standard CI is selected by `CI=true` or by
 `review.ci.profile: standard`. It is offline by default: a non-loopback CBD
