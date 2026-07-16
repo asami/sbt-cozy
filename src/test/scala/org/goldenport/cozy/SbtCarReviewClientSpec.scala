@@ -113,7 +113,7 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
 
     "send the generated CBD HTTP envelope and unwrap its canonical response" in {
       Given("a local CBD HTTP gateway that records one request envelope")
-      val canonical = "{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"gateResult\":\"unknown\"}"
+      val canonical = "{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"attestation\":{\"attestation\":true},\"gateResult\":\"unknown\"}"
       val gateway = new RecordingHttpGateway(canonical)
       gateway.start()
       val endpoint = new SbtCbdReviewHttpEndpoint(gateway.endpoint, reviewRole = Some("reviewer"))
@@ -171,7 +171,7 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
 
     def submit(value: String): Either[String, String] = {
       document = value
-      Right("{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"gateResult\":\"unknown\"}")
+      Right("{\"schemaVersion\":\"textus.cbd.review-submission.v1\",\"documentType\":\"canonical-review-response\",\"report\":{\"report\":true},\"attestation\":{\"attestation\":true},\"gateResult\":\"unknown\"}")
     }
   }
 

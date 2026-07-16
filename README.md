@@ -97,6 +97,7 @@ Tasks:
 - `cozyReviewSubmit`: invoke Cozy locally, submit Cozy and sbt evidence to the
   configured CBD endpoint, and write all canonical Review report artifacts
 - `cozyReviewCanonicalJson`: write `canonical-response.json`
+- `cozyReviewAttestation`: write the CBD-owned `canonical-attestation.json`
 - `cozyReviewReportHtml`: write `canonical-report.html`
 - `cozyReviewReportSarif`: write `canonical-report.sarif`
 - `cozyReviewGate`: fail the sbt task unless CBD's canonical gate is `pass`
@@ -109,10 +110,12 @@ fallback role; production endpoints must use their configured authentication
 boundary rather than this setting.
 
 All Review artifacts are emitted under `cozyReviewEvidenceDir`. The JSON is
-the unmodified canonical report inside a deterministic artifact envelope; HTML
-is a safe report projection; SARIF is explicitly a lossy projection containing
-only location-bearing Findings. No sbt task recomputes a report, Finding,
-Assessment, or gate.
+the unmodified canonical report and attestation inside a deterministic artifact
+envelope; HTML is a safe report projection; SARIF is explicitly a lossy
+projection containing only location-bearing Findings. sbt-cozy verifies that
+the CBD attestation binds the canonical report, target, profile, provider/rule
+set identities, and gate before writing it. No sbt task recomputes a report,
+Finding, Assessment, attestation, or gate.
 
 ## Backend Modes
 

@@ -239,6 +239,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyReviewCbdRole = settingKey[Option[String]]("Development-only CBD Review role header: reviewer, operator, or admin")
     val cozyReviewSubmit = taskKey[File]("Collect local Cozy and sbt evidence, then submit it to the configured CBD Review gateway")
     val cozyReviewCanonicalJson = taskKey[File]("Write the CBD-owned canonical Review response JSON artifact")
+    val cozyReviewAttestation = taskKey[File]("Write the CBD-owned canonical Review attestation artifact")
     val cozyReviewReportHtml = taskKey[File]("Write the deterministic HTML projection of the canonical Review report")
     val cozyReviewReportSarif = taskKey[File]("Write the lossy location-bearing Finding SARIF projection")
     val cozyReviewGate = taskKey[Unit]("Fail unless the CBD-owned canonical Review gate passes")
@@ -888,6 +889,13 @@ object CozyPlugin extends AutoPlugin {
     },
 
     cozyReviewCanonicalJson := cozyReviewSubmit.value,
+
+    cozyReviewAttestation := {
+      val _ = cozyReviewCanonicalJson.value
+      val output = cozyReviewEvidenceDir.value / SbtReviewReportArtifacts.ATTESTATION_FILE
+      if (!output.isFile) sys.error(s"[sbt-cozy] missing canonical Review attestation artifact: ${output.getAbsolutePath}")
+      output
+    },
 
     cozyReviewReportHtml := {
       val _ = cozyReviewCanonicalJson.value

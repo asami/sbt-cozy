@@ -16,34 +16,42 @@ private[cozy] final case class SbtReviewReportArtifacts(
   canonicalJson: String,
   html: String,
   sarif: String,
+  attestation: String,
   gate: String
 )
 
 private[cozy] final case class SbtReviewReportArtifactFiles(
   canonicalJson: File,
   html: File,
-  sarif: File
+  sarif: File,
+  attestation: File
 )
 
 private[cozy] object SbtReviewReportArtifacts {
   val CANONICAL_JSON_FILE = "canonical-response.json"
   val HTML_FILE = "canonical-report.html"
   val SARIF_FILE = "canonical-report.sarif"
+  val ATTESTATION_FILE = "canonical-attestation.json"
 
   def render(response: SbtReviewCanonicalResponse): Either[String, SbtReviewReportArtifacts] =
     for {
       report <- parse(response.report).left.map(_ => "cbd-review-canonical-report-invalid")
+      attestationText <- response.attestation.toRight("cbd-review-canonical-attestation-missing")
+      attestation <- parse(attestationText).left.map(_ => "cbd-review-canonical-attestation-invalid")
       gate <- _gate(report, response.gate)
+      _ <- _validate_attestation(report, attestation, gate)
       findings <- _findings(report)
     } yield SbtReviewReportArtifacts(
       Printer.noSpaces.print(Json.obj(
         "documentType" -> Json.fromString("canonical-review-response-artifact"),
+        "attestation" -> attestation,
         "gateResult" -> Json.fromString(gate),
         "report" -> report,
         "schemaVersion" -> Json.fromString("textus.cbd.review-submission.v1")
       )),
       _html(report, gate),
       _sarif(findings, gate),
+      Printer.noSpaces.print(attestation),
       gate
     )
 
@@ -53,10 +61,12 @@ private[cozy] object SbtReviewReportArtifacts {
       val json = directory / CANONICAL_JSON_FILE
       val html = directory / HTML_FILE
       val sarif = directory / SARIF_FILE
+      val attestation = directory / ATTESTATION_FILE
       IO.write(json, artifacts.canonicalJson + "\n")
       IO.write(html, artifacts.html)
       IO.write(sarif, artifacts.sarif + "\n")
-      SbtReviewReportArtifactFiles(json, html, sarif)
+      IO.write(attestation, artifacts.attestation + "\n")
+      SbtReviewReportArtifactFiles(json, html, sarif, attestation)
     }
 
   def gateFromArtifact(file: File): Either[String, String] =
@@ -77,6 +87,29 @@ private[cozy] object SbtReviewReportArtifacts {
     report.hcursor.downField("observations").as[Vector[Json]].left.map(_ => "cbd-review-report-observations-invalid").map(
       _.filter(_string(_, "type").contains("finding"))
     )
+
+  private def _validate_attestation(report: Json, attestation: Json, gate: String): Either[String, Unit] = {
+    val identities = Vector("reviewId", "reportId", "reportDigest", "profile")
+    val sameidentities = identities.forall(key => _string(report, key).exists(value => _string(attestation, key).contains(value)))
+    val sametarget = _string(report.hcursor.downField("target").focus.getOrElse(Json.Null), "digest").exists(value => _string(attestation, "targetDigest").contains(value))
+    val samegate = attestation.hcursor.downField("gate").focus.contains(report.hcursor.downField("gate").focus.getOrElse(Json.Null)) && _string(attestation.hcursor.downField("gate").focus.getOrElse(Json.Null), "result").contains(gate)
+    val reportproviders = report.hcursor.downField("execution").downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding)
+    val attestedproviders = attestation.hcursor.downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding)
+    if (!sameidentities || !sametarget || !samegate) Left("cbd-review-attestation-binding-invalid")
+    else if (reportproviders.isEmpty || reportproviders != attestedproviders) Left("cbd-review-attestation-providers-invalid")
+    else Right(())
+  }
+
+  private def _provider_binding(value: Json): Option[String] =
+    for {
+      provider <- value.hcursor.downField("provider").focus
+      providerid <- _string(provider, "id")
+      providerversion <- _string(provider, "version")
+      ruleset <- value.hcursor.downField("ruleSet").focus
+      ruleid <- _string(ruleset, "id")
+      ruleversion <- _string(ruleset, "version")
+      bundle <- _string(value, "bundleDigest")
+    } yield Vector(providerid, providerversion, ruleid, ruleversion, bundle).mkString("\u0000")
 
   private def _html(report: Json, gate: String): String = {
     val title = _string(report, "reportId").getOrElse("CBD CAR Review")

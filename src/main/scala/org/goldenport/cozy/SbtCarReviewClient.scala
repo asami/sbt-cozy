@@ -33,7 +33,8 @@ private[cozy] final case class SbtReviewPairedSubmission(
 
 private[cozy] final case class SbtReviewCanonicalResponse(
   report: String,
-  gate: String
+  gate: String,
+  attestation: Option[String] = None
 )
 
 private[cozy] trait SbtLocalCozyReviewTransport {
@@ -181,9 +182,10 @@ private[cozy] final class SbtCbdReviewWireTransport(endpoint: SbtCbdReviewWireEn
       request = _submission(value, target)
       response <- endpoint.submit(request)
       report <- _object(response, "report")
+      attestation <- _object(response, "attestation")
       gate <- _string(response, "gateResult")
       _ <- Either.cond(Set("pass", "fail", "unknown").contains(gate), (), "cbd-review-response-gate-invalid")
-    } yield SbtReviewCanonicalResponse(report, gate)
+    } yield SbtReviewCanonicalResponse(report, gate, Some(attestation))
 
   private def _submission(value: SbtReviewPairedSubmission, target: String): String =
     s"""{"schemaVersion":"textus.cbd.review-submission.v1","documentType":"provider-document-submission","reviewId":${_quote(value.reviewId)},"target":$target,"providers":[${value.providers.map(_provider).mkString(",")}]}"""
