@@ -95,7 +95,11 @@ Tasks:
 - `cozyReviewCbdRole`: optional development-loopback submission role, read from
   `review.cbd.role`; only `reviewer`, `operator`, or `admin` are admitted
 - `cozyReviewSubmit`: invoke Cozy locally, submit Cozy and sbt evidence to the
-  configured CBD endpoint, and write `canonical-response.json`
+  configured CBD endpoint, and write all canonical Review report artifacts
+- `cozyReviewCanonicalJson`: write `canonical-response.json`
+- `cozyReviewReportHtml`: write `canonical-report.html`
+- `cozyReviewReportSarif`: write `canonical-report.sarif`
+- `cozyReviewGate`: fail the sbt task unless CBD's canonical gate is `pass`
 
 The HTTP request is the generated CBD outer envelope with a single
 `submissionDocument` JSON-string member. URL user information, arbitrary
@@ -103,6 +107,12 @@ headers, redirects, non-JSON responses, and oversized exchanges are rejected.
 `review.cbd.role` is only for a local development server using its explicit
 fallback role; production endpoints must use their configured authentication
 boundary rather than this setting.
+
+All Review artifacts are emitted under `cozyReviewEvidenceDir`. The JSON is
+the unmodified canonical report inside a deterministic artifact envelope; HTML
+is a safe report projection; SARIF is explicitly a lossy projection containing
+only location-bearing Findings. No sbt task recomputes a report, Finding,
+Assessment, or gate.
 
 ## Backend Modes
 

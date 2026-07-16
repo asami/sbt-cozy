@@ -40,7 +40,11 @@ lazy val root = (project in file("."))
     sbtPlugin := true,
     scalaVersion := "2.12.20",
     scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
-    libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+    libraryDependencies ++= Seq(
+      "io.circe" %% "circe-core" % "0.14.13",
+      "io.circe" %% "circe-parser" % "0.14.13",
+      "org.scalatest" %% "scalatest" % "3.2.19" % Test
+    ),
     scriptedBufferLog := false,
     scriptedLaunchOpts += s"-Dplugin.version=${version.value}"
   )
