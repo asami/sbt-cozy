@@ -20,7 +20,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul. 16, 2026
+ * @version Jul. 19, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -1659,7 +1659,7 @@ private[cozy] object CozyWebDescriptorSync {
 
   private def _insert_form_entries(current: String, entries: String): String = {
     val lines = current.stripSuffix("\n").linesIterator.toVector
-    val formindex = lines.indexWhere(_.trim == "form:")
+    val formindex = lines.indexWhere(_ == "form:")
     if (formindex < 0) (current.stripSuffix("\n") + "\n" + entries).stripSuffix("\n") + "\n"
     else {
       val end = (formindex + 1 until lines.size).find { index =>
