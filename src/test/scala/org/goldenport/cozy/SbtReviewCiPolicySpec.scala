@@ -6,7 +6,7 @@ import org.scalatest.wordspec.AnyWordSpec
 
 /*
  * @since   Jul. 16, 2026
- * @version Jul. 16, 2026
+ * @version Jul. 23, 2026
  * @author  ASAMI, Tomoharu
  */
 final class SbtReviewCiPolicySpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -20,6 +20,8 @@ final class SbtReviewCiPolicySpec extends AnyWordSpec with Matchers with GivenWh
       policy.providerEnabled("sbt-cozy") shouldBe true
       policy.providerEnabled("external") shouldBe false
       policy.providerEnabled("ai") shouldBe false
+      policy.validateProviderKinds(SbtReviewCiPolicy.LOCAL_DETERMINISTIC_PROVIDER_KINDS) shouldBe Right(())
+      policy.validateProviderKinds(Vector("external")) shouldBe Left("cbd-review-ci-provider-disabled:external")
       policy.validateEndpoint("http://127.0.0.1:8080/rest/v1/cbd-support/cbd-review-admin/post") shouldBe Right(())
       policy.validateEndpoint("https://review.example.test/review") shouldBe Left("cbd-review-ci-network-gateway-disabled")
     }

@@ -4,7 +4,7 @@ import java.net.URI
 
 /*
  * @since   Jul. 16, 2026
- * @version Jul. 16, 2026
+ * @version Jul. 23, 2026
  * @author  ASAMI, Tomoharu
  */
 /**
@@ -30,9 +30,17 @@ private[cozy] final case class SbtReviewCiPolicy(
     case "ai" => aiProvidersEnabled
     case _ => false
   }
+
+  def validateProviderKinds(providerKinds: Vector[String]): Either[String, Unit] =
+    providerKinds.find(kind => !providerEnabled(kind)) match {
+      case Some(kind) => Left(s"cbd-review-ci-provider-disabled:$kind")
+      case None => Right(())
+    }
 }
 
 private[cozy] object SbtReviewCiPolicy {
+  val LOCAL_DETERMINISTIC_PROVIDER_KINDS: Vector[String] = Vector("cozy", "sbt-cozy")
+
   def resolve(config: CozyProjectConfig, environment: Map[String, String]): Either[String, SbtReviewCiPolicy] =
     for {
       standardCi <- _standard_ci(config, environment)

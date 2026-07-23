@@ -20,7 +20,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul. 19, 2026
+ * @version Jul. 23, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -876,7 +876,9 @@ object CozyPlugin extends AutoPlugin {
 
     cozyReviewSubmit := {
       val endpoint = cozyReviewCbdEndpoint.value.getOrElse(sys.error("[sbt-cozy] configure review.cbd.endpoint before cozyReviewSubmit"))
-      cozyReviewCiPolicy.value.validateEndpoint(endpoint).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
+      val cipolicy = cozyReviewCiPolicy.value
+      cipolicy.validateEndpoint(endpoint).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
+      cipolicy.validateProviderKinds(SbtReviewCiPolicy.LOCAL_DETERMINISTIC_PROVIDER_KINDS).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
       val directory = cozyReviewEvidenceDir.value
       val _ = cozyReviewSbtEvidence.value
       val artifacts = SbtReviewEvidenceArtifacts(
@@ -940,9 +942,9 @@ object CozyPlugin extends AutoPlugin {
     },
 
     cozyReviewGate := {
-      val canonical = cozyReviewCanonicalJson.value
-      val gate = SbtReviewReportArtifacts.gateFromArtifact(canonical).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
-      if (gate != "pass") sys.error(s"[sbt-cozy] CBD Review gate did not pass: $gate")
+      val manifest = cozyReviewArtifactManifest.value
+      val gate = SbtReviewCiGate.fromManifest(manifest).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
+      if (gate.result != "pass") sys.error(s"[sbt-cozy] CBD Review gate did not pass: ${gate.result} (exit code ${gate.exitCode})")
     },
 
     cozyReviewPublish := Def.taskDyn[File] {
