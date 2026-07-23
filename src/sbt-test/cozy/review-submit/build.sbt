@@ -24,11 +24,17 @@ lazy val root = (project in file("."))
       val directory = cozyReviewEvidenceDir.value
       val canonical = cozyReviewCanonicalJson.value
       val attestation = cozyReviewAttestation.value
+      val manifest = cozyReviewArtifactManifest.value
+      val markdown = cozyReviewReportMarkdown.value
+      val pdf = cozyReviewReportPdf.value
       val html = cozyReviewReportHtml.value
       val sarif = cozyReviewReportSarif.value
       val required = Seq(
         canonical,
         attestation,
+        manifest,
+        markdown,
+        pdf,
         html,
         sarif
       )

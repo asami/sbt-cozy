@@ -10,7 +10,7 @@ import sbt._
 
 /*
  * @since   Jul. 16, 2026
- * @version Jul. 16, 2026
+ * @version Jul. 23, 2026
  * @author  ASAMI, Tomoharu
  */
 /** Deterministic local projections of a CBD-owned canonical Review response. */
@@ -126,9 +126,9 @@ private[cozy] object SbtReviewReportArtifacts {
   private def _contains_sensitive_value(value: Json): Boolean =
     value.asString.exists { text =>
       val normalized = text.toLowerCase(java.util.Locale.ROOT)
-      normalized.matches(".*(bearer|basic)\\s+[a-z0-9._~+/-]+.*") ||
-        normalized.matches(".*(?:api[_-]?key|password|secret|token)\\s*=.*") ||
-        text.matches(".*AKIA[0-9A-Z]{16}.*") || text.matches(".*sk-[A-Za-z0-9_-]{16,}.*")
+      normalized.matches("(?s).*(bearer|basic)\\s+[a-z0-9._~+/-]+.*") ||
+        normalized.matches("(?s).*(?:api[_-]?key|password|secret|token)\\s*=.*") ||
+        text.matches("(?s).*AKIA[0-9A-Z]{16}.*") || text.matches("(?s).*sk-[A-Za-z0-9_-]{16,}.*")
     } || value.asObject.exists(_.values.exists(_contains_sensitive_value)) || value.asArray.exists(_.exists(_contains_sensitive_value))
 
   private def _sensitive_field(value: String): Boolean = {

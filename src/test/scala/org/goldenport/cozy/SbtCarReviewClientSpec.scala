@@ -104,11 +104,13 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       When("sbt-cozy submits one raw provider-document submission")
       val response = try endpoint.submit("{\"documentType\":\"provider-document-submission\"}") finally gateway.stop()
 
-      Then("the request uses the generated submission envelope and preserves CBD's raw canonical document")
+      Then("the request uses the generated submission envelope and preserves CBD's canonical document and artifact bundle")
       gateway.method shouldBe "POST"
       gateway.contentType should startWith("application/json")
       gateway.body should include("\"submissionDocument\":\"{\\\"documentType\\\":\\\"provider-document-submission\\\"}\"")
-      response shouldBe Right(canonical)
+      val envelope = response.fold(error => fail(error), identity)
+      io.circe.parser.parse(envelope).toOption.flatMap(_.hcursor.get[String]("canonicalResponse").toOption) shouldBe Some(canonical)
+      io.circe.parser.parse(envelope).toOption.flatMap(_.hcursor.get[String]("artifactBundle").toOption).map(_.nonEmpty) shouldBe Some(true)
     }
 
     "reject a malformed generated HTTP response envelope before it reaches the Review wire" in {
@@ -203,7 +205,8 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
         _body = scala.io.Source.fromInputStream(exchange.getRequestBody, "UTF-8").mkString
         val escaped = canonical.replace("\\", "\\\\").replace("\"", "\\\"")
         val suffix = if (extraField) ",\"unexpected\":true" else ""
-        val response = ("{\"canonical_response\":\"" + escaped + "\"" + suffix + "}").getBytes(StandardCharsets.UTF_8)
+        val bundle = "{\\\"documentType\\\":\\\"review-artifact-bundle\\\",\\\"markdown\\\":\\\"# Review\\\",\\\"pdfBase64\\\":\\\"JVBERg==\\\"}"
+        val response = ("{\"canonical_response\":\"" + escaped + "\",\"artifact_bundle\":\"" + bundle + "\"" + suffix + "}").getBytes(StandardCharsets.UTF_8)
         exchange.getResponseHeaders.set("Content-Type", "application/json")
         exchange.sendResponseHeaders(200, response.length)
         try exchange.getResponseBody.write(response) finally exchange.close()

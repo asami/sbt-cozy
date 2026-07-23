@@ -241,6 +241,9 @@ object CozyPlugin extends AutoPlugin {
     val cozyReviewSubmit = taskKey[File]("Collect local Cozy and sbt evidence, then submit it to the configured CBD Review gateway")
     val cozyReviewCanonicalJson = taskKey[File]("Write the CBD-owned canonical Review response JSON artifact")
     val cozyReviewAttestation = taskKey[File]("Write the CBD-owned canonical Review attestation artifact")
+    val cozyReviewArtifactManifest = taskKey[File]("Write the CBD Review CI artifact manifest")
+    val cozyReviewReportMarkdown = taskKey[File]("Write the CBD-owned Markdown projection of the canonical Review report")
+    val cozyReviewReportPdf = taskKey[File]("Write the CBD-owned PDF projection of the canonical Review report")
     val cozyReviewReportHtml = taskKey[File]("Write the deterministic HTML projection of the canonical Review report")
     val cozyReviewReportSarif = taskKey[File]("Write the lossy location-bearing Finding SARIF projection")
     val cozyReviewGate = taskKey[Unit]("Fail unless the CBD-owned canonical Review gate passes")
@@ -890,7 +893,7 @@ object CozyPlugin extends AutoPlugin {
         new SbtCozyCommandReviewTransport(cozyDelegateCommand.value),
         new SbtCbdReviewWireTransport(new SbtCbdReviewHttpEndpoint(endpoint))
       ).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
-      val outputs = SbtReviewReportArtifacts.write(directory, response).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
+      val outputs = SbtReviewCiArtifactMaterializer.write(directory, response).fold(error => sys.error(s"[sbt-cozy] $error"), identity)
       streams.value.log.info(s"[sbt-cozy] wrote CBD canonical Review response: ${outputs.canonicalJson.getAbsolutePath}")
       outputs.canonicalJson
     },
@@ -899,21 +902,39 @@ object CozyPlugin extends AutoPlugin {
 
     cozyReviewAttestation := {
       val _ = cozyReviewCanonicalJson.value
-      val output = cozyReviewEvidenceDir.value / SbtReviewReportArtifacts.ATTESTATION_FILE
+      val output = cozyReviewCanonicalJson.value.getParentFile / SbtReviewCiArtifactMaterializer.ATTESTATION_FILE
       if (!output.isFile) sys.error(s"[sbt-cozy] missing canonical Review attestation artifact: ${output.getAbsolutePath}")
+      output
+    },
+
+    cozyReviewArtifactManifest := {
+      val output = cozyReviewCanonicalJson.value.getParentFile / SbtReviewCiArtifactMaterializer.MANIFEST_FILE
+      if (!output.isFile) sys.error(s"[sbt-cozy] missing CBD Review artifact manifest: ${output.getAbsolutePath}")
+      output
+    },
+
+    cozyReviewReportMarkdown := {
+      val output = cozyReviewCanonicalJson.value.getParentFile / SbtReviewCiArtifactMaterializer.MARKDOWN_FILE
+      if (!output.isFile) sys.error(s"[sbt-cozy] missing canonical Review Markdown artifact: ${output.getAbsolutePath}")
+      output
+    },
+
+    cozyReviewReportPdf := {
+      val output = cozyReviewCanonicalJson.value.getParentFile / SbtReviewCiArtifactMaterializer.PDF_FILE
+      if (!output.isFile) sys.error(s"[sbt-cozy] missing canonical Review PDF artifact: ${output.getAbsolutePath}")
       output
     },
 
     cozyReviewReportHtml := {
       val _ = cozyReviewCanonicalJson.value
-      val output = cozyReviewEvidenceDir.value / SbtReviewReportArtifacts.HTML_FILE
+      val output = cozyReviewCanonicalJson.value.getParentFile / SbtReviewCiArtifactMaterializer.HTML_FILE
       if (!output.isFile) sys.error(s"[sbt-cozy] missing canonical Review HTML artifact: ${output.getAbsolutePath}")
       output
     },
 
     cozyReviewReportSarif := {
       val _ = cozyReviewCanonicalJson.value
-      val output = cozyReviewEvidenceDir.value / SbtReviewReportArtifacts.SARIF_FILE
+      val output = cozyReviewCanonicalJson.value.getParentFile / SbtReviewCiArtifactMaterializer.SARIF_FILE
       if (!output.isFile) sys.error(s"[sbt-cozy] missing canonical Review SARIF artifact: ${output.getAbsolutePath}")
       output
     },

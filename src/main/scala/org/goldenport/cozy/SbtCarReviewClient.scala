@@ -37,7 +37,9 @@ private[cozy] final case class SbtReviewPairedSubmission(
 private[cozy] final case class SbtReviewCanonicalResponse(
   report: String,
   gate: String,
-  attestation: Option[String] = None
+  attestation: Option[String] = None,
+  canonicalResponse: Option[String] = None,
+  artifactBundle: Option[String] = None
 )
 
 private[cozy] trait SbtLocalCozyReviewTransport {
@@ -115,8 +117,13 @@ private[cozy] final class SbtCbdReviewHttpEndpoint(
   private def _canonical_response(value: String): Either[String, String] =
     parse(value).toOption
       .flatMap(_.asObject)
-      .filter(_.keys.toSet == Set("canonical_response"))
-      .flatMap(_("canonical_response").flatMap(_.asString).filter(_.nonEmpty))
+      .filter(_.keys.toSet == Set("canonical_response", "artifact_bundle"))
+      .flatMap { fields =>
+        for {
+          canonical <- fields("canonical_response").flatMap(_.asString).filter(_.nonEmpty)
+          bundle <- fields("artifact_bundle").flatMap(_.asString).filter(_.nonEmpty)
+        } yield Printer.noSpaces.print(Json.obj("artifactBundle" -> Json.fromString(bundle), "canonicalResponse" -> Json.fromString(canonical)))
+      }
       .toRight("cbd-review-response-envelope-invalid")
 
   private def _quote(value: String): String =
@@ -154,14 +161,18 @@ private[cozy] final class SbtCbdReviewWireTransport(endpoint: SbtCbdReviewWireEn
 
   private def _canonical_response(value: String): Either[String, SbtReviewCanonicalResponse] =
     for {
-      json <- parse(value).left.map(_ => "cbd-review-response-json-invalid")
+      envelope <- parse(value).left.map(_ => "cbd-review-response-json-invalid")
+      envelopefields = envelope.asObject.map(_.toMap).getOrElse(Map.empty)
+      canonical = envelopefields.get("canonicalResponse").flatMap(_.asString).getOrElse(value)
+      artifactbundle = envelopefields.get("artifactBundle").flatMap(_.asString)
+      json <- parse(canonical).left.map(_ => "cbd-review-response-json-invalid")
       fields <- json.asObject.filter(_.keys.toSet == Set("schemaVersion", "documentType", "report", "attestation", "gateResult")).toRight("cbd-review-response-shape-invalid")
       _ <- Either.cond(fields("schemaVersion").flatMap(_.asString).contains("textus.cbd.review-submission.v1"), (), "cbd-review-response-schema-invalid")
       _ <- Either.cond(fields("documentType").flatMap(_.asString).contains("canonical-review-response"), (), "cbd-review-response-document-type-invalid")
       report <- fields("report").flatMap(_.asObject).map(value => _printer.print(Json.fromJsonObject(value))).toRight("cbd-review-response-report-invalid")
       attestation <- fields("attestation").flatMap(_.asObject).map(value => _printer.print(Json.fromJsonObject(value))).toRight("cbd-review-response-attestation-invalid")
       gate <- fields("gateResult").flatMap(_.asString).filter(Set("pass", "fail", "unknown")).toRight("cbd-review-response-gate-invalid")
-    } yield SbtReviewCanonicalResponse(report, gate, Some(attestation))
+    } yield SbtReviewCanonicalResponse(report, gate, Some(attestation), Some(canonical), artifactbundle)
 
   private def _object(value: String, key: String): Either[String, String] =
     parse(value).toOption

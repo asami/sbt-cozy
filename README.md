@@ -102,9 +102,12 @@ Tasks:
 - `cozyReviewSubmit`: invoke Cozy locally, submit Cozy and sbt evidence to the
   configured CBD endpoint, and write all canonical Review report artifacts
 - `cozyReviewCanonicalJson`: write `canonical-response.json`
-- `cozyReviewAttestation`: write the CBD-owned `canonical-attestation.json`
-- `cozyReviewReportHtml`: write `canonical-report.html`
-- `cozyReviewReportSarif`: write `canonical-report.sarif`
+- `cozyReviewAttestation`: write the CBD-owned `attestation.json`
+- `cozyReviewArtifactManifest`: write `review-artifacts.json`
+- `cozyReviewReportMarkdown`: write `report.md`
+- `cozyReviewReportPdf`: write `report.pdf`
+- `cozyReviewReportHtml`: write `report.html`
+- `cozyReviewReportSarif`: write `report.sarif`
 - `cozyReviewGate`: fail the sbt task unless CBD's canonical gate is `pass`
 - `cozyReviewPublish`: explicitly run `cozyReviewGate` before the selected
   release CAR/SAR publication task
