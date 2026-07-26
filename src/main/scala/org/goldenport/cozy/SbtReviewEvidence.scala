@@ -1,8 +1,9 @@
 package org.goldenport.cozy
 
-import java.io.File
+import java.io.{BufferedInputStream, File, FileInputStream}
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import scala.collection.mutable.ArrayBuffer
 
 import sbt._
 
@@ -41,28 +42,54 @@ private[cozy] object SbtReviewEvidence {
   val RULE_SET_ID = "sbt-cozy.build-evidence"
   val CAPABILITY_ID = "sbt-cozy.build-evidence"
 
-  val MAX_SOURCE_FILES = 10000
-  val MAX_SOURCE_BYTES = 16L * 1024L * 1024L
+  private val _excluded_directories = Set(".git", ".bloop", ".bsp", ".idea", ".metals", ".scala-build", "target")
+  private val _root_input_names = Set(
+    "assembly-descriptor.yaml",
+    "build.sbt",
+    "component-descriptor.yaml",
+    "project.yaml"
+  )
 
   def sourceDigest(base: File): String = {
     val root = base.getCanonicalFile
-    val excluded = Set(".git", ".bsp", ".idea", "target")
-    val files = (root ** "*").get
+    sourceDigest(root, defaultInputFiles(root))
+  }
+
+  def sourceDigest(base: File, inputFiles: Seq[File]): String = {
+    val root = base.getCanonicalFile
+    val files = inputFiles
       .filter(_.isFile)
-      .filter { file =>
-        val relative = IO.relativize(root, file).getOrElse(file.getName)
-        !relative.split(java.util.regex.Pattern.quote(File.separator)).exists(excluded.contains)
-      }
+      .map(_.getCanonicalFile)
+      .filter(file => IO.relativize(root, file).isDefined)
+      .distinct
       .sortBy(file => IO.relativize(root, file).getOrElse(file.getName))
-    require(files.size <= MAX_SOURCE_FILES, s"sbt-cozy Review target exceeds ${MAX_SOURCE_FILES} source files")
-    val sourcebytes = files.map(_.length).sum
-    require(sourcebytes <= MAX_SOURCE_BYTES, s"sbt-cozy Review target exceeds ${MAX_SOURCE_BYTES} source bytes")
     val material = files.map { file =>
       val relative = IO.relativize(root, file).getOrElse(file.getName).replace(File.separatorChar, '/')
-      s"$relative:${_sha256(IO.readBytes(file))}"
+      s"$relative:${_sha256(file)}"
     }.mkString("\n")
     _digest(material)
   }
+
+  def defaultInputFiles(base: File): Vector[File] = {
+    val root = base.getCanonicalFile
+    val files = ArrayBuffer.empty[File]
+    Option(root.listFiles).toVector.flatten.foreach { file =>
+      if (file.isFile && (_root_input_names.contains(file.getName) || file.getName.endsWith(".sbt")))
+        files += file
+    }
+    Vector(root / ".cozy", root / "project", root / "src").foreach { directory =>
+      if (directory.isDirectory)
+        files ++= (directory ** "*").get.filter(_is_review_input(root, _))
+    }
+    files.map(_.getCanonicalFile).distinct.sortBy(file => IO.relativize(root, file).getOrElse(file.getName)).toVector
+  }
+
+  private def _is_review_input(root: File, file: File): Boolean =
+    file.isFile && IO.relativize(root, file).exists { relative =>
+      val segments = relative.split(java.util.regex.Pattern.quote(File.separator)).toVector
+      !segments.exists(_excluded_directories.contains) &&
+        !segments.sliding(2).exists(_.toVector == Vector("project", "project"))
+    }
 
   def render(target: SbtReviewEvidenceTarget, providerVersion: String, results: Seq[SbtReviewTaskResult]): SbtReviewEvidenceArtifacts = {
     val normalized = results.sortBy(_.task).toVector
@@ -201,4 +228,21 @@ private[cozy] object SbtReviewEvidence {
 
   private def _sha256(value: Array[Byte]): String =
     MessageDigest.getInstance("SHA-256").digest(value).map(byte => f"${byte & 0xff}%02x").mkString
+
+  private def _sha256(file: File): String = {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val input = new BufferedInputStream(new FileInputStream(file))
+    val buffer = new Array[Byte](64 * 1024)
+    try {
+      var length = input.read(buffer)
+      while (length >= 0) {
+        if (length > 0)
+          digest.update(buffer, 0, length)
+        length = input.read(buffer)
+      }
+    } finally {
+      input.close()
+    }
+    digest.digest().map(byte => f"${byte & 0xff}%02x").mkString
+  }
 }

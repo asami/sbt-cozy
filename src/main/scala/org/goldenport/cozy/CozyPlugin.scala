@@ -235,6 +235,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyPublishCoursierChannel = taskKey[File]("Publish configured Coursier channel entries to the warehouse")
     val cozyReviewEvidenceDir = settingKey[File]("Directory for provider-owned sbt CAR Review evidence documents")
     val cozyReviewCiPolicy = settingKey[SbtReviewCiPolicy]("Resolved deterministic/offline execution policy for CAR Review")
+    val cozyReviewInputFiles = taskKey[Seq[File]]("Project-owned source and definition files used to identify the Review target")
     val cozyReviewSbtEvidence = taskKey[File]("Emit deterministic sbt-cozy Review Provider descriptor, request, and task evidence bundle")
     val cozyReviewCbdEndpoint = settingKey[Option[String]]("Explicit private CBD Review HTTP gateway endpoint")
     val cozyReviewCozyProviderVersion = settingKey[Option[String]]("Explicit Cozy Review provider runtime version recorded in the provider descriptor and bundle")
@@ -329,6 +330,7 @@ object CozyPlugin extends AutoPlugin {
     cozyCoursierChannelEntries := Seq.empty,
     cozyReviewEvidenceDir := target.value / "cbd-review" / "sbt-cozy",
     cozyReviewCiPolicy := SbtReviewCiPolicy.resolve(cozyProjectConfig.value, sys.env).fold(error => sys.error(s"[sbt-cozy] $error"), identity),
+    cozyReviewInputFiles := SbtReviewEvidence.defaultInputFiles(baseDirectory.value),
     cozyReviewCbdEndpoint := cozyProjectConfig.value.value("review.cbd.endpoint"),
     cozyReviewCozyProviderVersion :=
       cozyProjectConfig.value.value("review.cozy.provider_version")
@@ -843,6 +845,7 @@ object CozyPlugin extends AutoPlugin {
       if (cozyPackaging.value.trim.equalsIgnoreCase("car"))
         Def.task {
           _write_sbt_review_evidence(
+            cozyReviewInputFiles.value,
             _task_result((cozyGenerate).result.value),
             _task_result((Compile / compile).result.value),
             _task_result((Test / test).result.value),
@@ -859,6 +862,7 @@ object CozyPlugin extends AutoPlugin {
       else
         Def.task {
           _write_sbt_review_evidence(
+            cozyReviewInputFiles.value,
             _task_result((cozyGenerate).result.value),
             _task_result((Compile / compile).result.value),
             _task_result((Test / test).result.value),
@@ -970,6 +974,7 @@ object CozyPlugin extends AutoPlugin {
   }
 
   private def _write_sbt_review_evidence(
+    reviewinputfiles: Seq[File],
     generation: String,
     compilation: String,
     tests: String,
@@ -994,7 +999,7 @@ object CozyPlugin extends AutoPlugin {
       Option(organization).map(_.trim).filter(_.nonEmpty),
       name,
       version,
-      SbtReviewEvidence.sourceDigest(projectroot)
+      SbtReviewEvidence.sourceDigest(projectroot, reviewinputfiles)
     )
     val artifacts = SbtReviewEvidence.render(
       targetidentity,

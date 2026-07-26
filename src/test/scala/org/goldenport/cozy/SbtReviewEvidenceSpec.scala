@@ -72,19 +72,36 @@ final class SbtReviewEvidenceSpec extends AnyWordSpec with Matchers with GivenWh
       }
     }
 
-    "reject an unbounded source target before reading it into the digest" in {
-      Given("a project source file above the provider input limit")
+    "stream project source content independently of the provider payload limit" in {
+      Given("a project source file larger than the provider request limit")
       _with_temp_dir { root =>
         val oversized = root.resolve("src/main/cozy/oversized.cml")
         _write(oversized, "x" * ((16 * 1024 * 1024) + 1))
 
         When("sbt-cozy derives the Review target digest")
-        val exception = intercept[IllegalArgumentException] {
-          SbtReviewEvidence.sourceDigest(root.toFile)
-        }
+        val digest = SbtReviewEvidence.sourceDigest(root.toFile)
 
-        Then("the provider refuses the unbounded input deterministically")
-        exception.getMessage should include ("Review target exceeds")
+        Then("source identity is computed without treating source bytes as a transported provider payload")
+        digest should startWith ("sha256:")
+      }
+    }
+
+    "exclude generated meta-build state from the default Review input set" in {
+      Given("equivalent project sources with different generated project/project state")
+      _with_temp_dir { root =>
+        val first = root.resolve("first")
+        val second = root.resolve("second")
+        _write(first.resolve("src/main/cozy/model.cml"), "entity Customer")
+        _write(second.resolve("src/main/cozy/model.cml"), "entity Customer")
+        _write(first.resolve("project/project/generated.bin"), "first generated state")
+        _write(second.resolve("project/project/generated.bin"), "second generated state")
+
+        When("sbt-cozy derives both Review target digests")
+        val firstdigest = SbtReviewEvidence.sourceDigest(first.toFile)
+        val seconddigest = SbtReviewEvidence.sourceDigest(second.toFile)
+
+        Then("generated meta-build state does not change project source identity")
+        firstdigest shouldBe seconddigest
       }
     }
 
