@@ -2,7 +2,7 @@ import sbt.ScriptedPlugin
 import sbt.ScriptedPlugin.autoImport._
 
 ThisBuild / organization := "org.goldenport"
-ThisBuild / version := "0.1.15-SNAPSHOT"
+ThisBuild / version := "0.1.15"
 ThisBuild / description := "sbt plugin for cozy/CML Scala source generation and CAR/SAR packaging"
 
 ThisBuild / publishArtifact := true
