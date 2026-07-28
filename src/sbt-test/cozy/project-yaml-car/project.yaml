@@ -1,5 +1,10 @@
 project:
   name: project-yaml-car
   kind: car
+build:
+  cozyVersion: "0.3.1-SNAPSHOT"
+  dependencies:
+    compile:
+      - "org.goldenport::goldenport-cncf:0.5.2-SNAPSHOT"
 packaging:
   kind: car
