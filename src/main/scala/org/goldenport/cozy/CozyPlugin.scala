@@ -20,7 +20,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul. 28, 2026
+ * @version Jul. 29, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -268,7 +268,9 @@ object CozyPlugin extends AutoPlugin {
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
-    val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare runtime classpath file.")
+    val cozyDevelopmentRuntimeManifest = taskKey[File]("Write development runtime admission evidence for a CAR project.")
+    val cozyRuntimeEvidenceFiles = taskKey[Seq[File]]("Prepare the complete development runtime evidence set.")
+    val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare the complete runtime evidence set.")
 
     val cozyPackaging = settingKey[String]("Effective packaging target, such as 'maven', 'car', or 'sar'.")
     val cozyWireStandardPublishTasks = settingKey[Boolean]("Route sbt publish/publishLocal to Cozy CAR/SAR publication tasks when the project metadata declares an archive project.")
@@ -958,8 +960,30 @@ object CozyPlugin extends AutoPlugin {
       out
     },
 
+    cozyDevelopmentRuntimeManifest := {
+      val out = target.value / "cncf.d" / "car-runtime-manifest.json"
+      CozySbtBridge.prepareDevelopmentRuntimeEvidence(
+        projectDir = baseDirectory.value,
+        runtimeClasspathFile = cozyRuntimeClasspathFile.value,
+        output = out,
+        baseDir = baseDirectory.value,
+        delegateProjectDir = cozyDelegateProjectDir.value,
+        delegateCommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      streams.value.log.info(s"[sbt-cozy] wrote development runtime manifest: ${out.getAbsolutePath}")
+      out
+    },
+
+    cozyRuntimeEvidenceFiles := {
+      val classpath = cozyRuntimeClasspathFile.value
+      val manifest = cozyDevelopmentRuntimeManifest.value
+      Seq(classpath, manifest)
+    },
+
     cozyPrepareRuntime := {
       val _ = (Compile / compile).value
+      cozyRuntimeEvidenceFiles.value
       cozyRuntimeClasspathFile.value
     },
 
@@ -2875,6 +2899,30 @@ private[cozy] object CozySbtBridge {
       ),
       baseDirectory,
       delegateProjectDirectory,
+      delegateCommand,
+      log
+    )
+
+  def prepareDevelopmentRuntimeEvidence(
+    projectDir: File,
+    runtimeClasspathFile: File,
+    output: File,
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit =
+    _run(
+      _request(
+        action = "prepare-development-runtime-evidence",
+        arguments = Vector(
+          "--project-dir", projectDir.getAbsolutePath,
+          "--runtime-classpath-file", runtimeClasspathFile.getAbsolutePath,
+          "--save", output.getAbsolutePath
+        )
+      ),
+      baseDir,
+      delegateProjectDir,
       delegateCommand,
       log
     )

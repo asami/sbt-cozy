@@ -1,0 +1,19 @@
+project:
+  name: development-runtime-evidence
+  kind: car
+  component:
+    name: development-runtime-evidence
+    version: "0.1.0-SNAPSHOT"
+build:
+  cozyVersion: "0.3.1-SNAPSHOT"
+  dependencies:
+    compile:
+      - "org.goldenport::goldenport-cncf:0.5.2-SNAPSHOT"
+packaging:
+  kind: car
+  car:
+    runtime:
+      cncf:
+        minimum: "0.5.2-SNAPSHOT"
+        tested:
+          - "0.5.2-SNAPSHOT"

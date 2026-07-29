@@ -4,11 +4,14 @@
   "sourceOfTruth": "cozy",
   "supportedActions": [
     "generate",
+    "rebind-generation-provenance",
+    "prepare-development-runtime-evidence",
     "package-car",
     "package-sar",
     "publish-car",
     "publish-sar",
     "publish-project",
+    "publish-video",
     "distribute-samples",
     "index-warehouse"
   ],

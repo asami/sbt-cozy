@@ -3,18 +3,12 @@
   "action": "index-warehouse",
   "arguments": [
     "/tmp/warehouse",
-    "--save",
-    "/tmp/publish.d",
-    "--name",
-    "textus-tutorial",
-    "--maven-coordinates",
-    "org.example:textus-tutorial_3",
-    "--repository-artifacts",
-    "car,sar",
-    "--repository-modules",
-    "textus-tutorial",
-    "--download-samples",
-    "textus-tutorial"
+    "--save", "/tmp/publish.d",
+    "--name", "textus-tutorial",
+    "--maven-coordinates", "org.example:textus-tutorial_3",
+    "--repository-artifacts", "car,sar",
+    "--repository-modules", "textus-tutorial",
+    "--download-samples", "textus-tutorial"
   ],
   "settings": {}
 }

@@ -2,16 +2,11 @@
   "version": "v1",
   "action": "package-car",
   "arguments": [
-    "--name",
-    "sample-component",
-    "--version",
-    "0.1.0",
-    "--save",
-    "/tmp/sample-component.car",
-    "--project-dir",
-    "/tmp/sample-project",
-    "--main-jar",
-    "/tmp/component-main.jar"
+    "--name", "sample-component",
+    "--version", "0.1.0",
+    "--save", "/tmp/sample-component.car",
+    "--project-dir", "/tmp/sample-project",
+    "--main-jar", "/tmp/component-main.jar"
   ],
   "settings": {}
 }

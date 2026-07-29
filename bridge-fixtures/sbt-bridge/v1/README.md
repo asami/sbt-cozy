@@ -6,7 +6,10 @@ contract consumed by `sbt-cozy`.
 Contract rules:
 - protocol: `sbt-bridge`
 - version: `v1`
-- supported actions: `generate`, `package-car`, `package-sar`, `publish-car`, `publish-sar`, `publish-project`, `distribute-samples`, `index-warehouse`
+- supported actions: `generate`, `rebind-generation-provenance`,
+  `prepare-development-runtime-evidence`,
+  `package-car`, `package-sar`, `publish-car`, `publish-sar`,
+  `publish-project`, `publish-video`, `distribute-samples`, `index-warehouse`
 - additive request fields are allowed only if existing consumers can ignore them
 - removals, renames, or semantic changes require `v2`
 
@@ -18,6 +21,12 @@ Request contract:
   - `arguments`
 - optional fields:
   - `settings`
+- reserved settings:
+  - `sbt.project_dir`: consuming sbt project directory used as the base for Cozy project config lookup
+
+`prepare-development-runtime-evidence` requires `--project-dir`,
+`--runtime-classpath-file`, and `--save`. It writes mutable-development
+runtime admission evidence without hashing compiled class bytes.
 
 Response contract in `v1`:
 - runtime success/failure is process-oriented

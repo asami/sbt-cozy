@@ -1,0 +1,7 @@
+> clean
+> compile
+> cozyPrepareRuntime
+> verifyInitialRuntimeEvidence
+> rewriteRuntimeContractEvidence
+> cozyPrepareRuntime
+> verifyRegeneratedRuntimeEvidence

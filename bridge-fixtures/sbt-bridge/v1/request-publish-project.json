@@ -3,10 +3,8 @@
   "action": "publish-project",
   "arguments": [
     "/tmp/sample-project",
-    "--save",
-    "/tmp/publish.d",
-    "--kind",
-    "car"
+    "--save", "/tmp/publish.d",
+    "--kind", "car"
   ],
   "settings": {}
 }

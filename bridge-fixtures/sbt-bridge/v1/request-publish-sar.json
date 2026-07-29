@@ -3,14 +3,10 @@
   "action": "publish-sar",
   "arguments": [
     "/tmp/sample-project",
-    "--warehouse",
-    "/tmp/warehouse",
-    "--name",
-    "sample-subsystem",
-    "--version",
-    "0.1.0",
-    "--sar",
-    "/tmp/sample-subsystem.sar"
+    "--warehouse", "/tmp/warehouse",
+    "--name", "sample-subsystem",
+    "--version", "0.1.0",
+    "--sar", "/tmp/sample-subsystem.sar"
   ],
   "settings": {}
 }

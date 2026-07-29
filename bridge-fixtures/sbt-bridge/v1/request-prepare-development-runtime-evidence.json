@@ -1,0 +1,13 @@
+{
+  "version": "v1",
+  "action": "prepare-development-runtime-evidence",
+  "arguments": [
+    "--project-dir",
+    "/tmp/sample-project",
+    "--runtime-classpath-file",
+    "/tmp/sample-project/target/cncf.d/runtime-classpath.txt",
+    "--save",
+    "/tmp/sample-project/target/cncf.d/car-runtime-manifest.json"
+  ],
+  "settings": {}
+}

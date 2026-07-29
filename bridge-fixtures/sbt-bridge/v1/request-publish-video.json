@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "action": "publish-video",
+  "arguments": [
+    "/tmp/site/src/main/doxsite/tutorial.video",
+    "--save",
+    "/tmp/site/src/main/publication",
+    "--warehouse",
+    "/tmp/warehouse",
+    "--version",
+    "0.1.0"
+  ],
+  "settings": {
+    "sbt.project_dir": "/tmp/site"
+  }
+}

@@ -2,6 +2,22 @@
 
 `sbt-cozy` is an `sbt` plugin that generates Scala sources from CML files under `src/main/cozy` and builds CAR/SAR archives.
 
+## Development Runtime Preparation
+
+For a CAR selected through CNCF `--component-dev-dir`, run:
+
+```sh
+sbt cozyPrepareRuntime
+```
+
+The task compiles the project, writes
+`target/cncf.d/runtime-classpath.txt`, and writes the accompanying
+`target/cncf.d/car-runtime-manifest.json`. `cozyPrepareRuntime` retains its
+classpath-file return contract; `cozyRuntimeEvidenceFiles` exposes the complete
+prepared evidence set, and `cozyDevelopmentRuntimeManifest` exposes the
+development manifest directly. The manifest validates stable CAR contract
+inputs and deliberately excludes mutable compiled class bytes.
+
 ## Features
 
 - Load `.cml`, `.cozy`, and `.dox` files

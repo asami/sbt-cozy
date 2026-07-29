@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "action": "rebind-generation-provenance",
+  "arguments": [
+    "--delegated-provenance", "/tmp/delegate-work/run-0/target/cozy/generation-provenance.json",
+    "--delegated-output-root", "/tmp/delegate-work/run-0",
+    "--project-root", "/tmp/sample-project"
+  ],
+  "settings": {}
+}

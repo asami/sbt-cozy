@@ -6,7 +6,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /*
  * @since   Apr. 23, 2026
  *  version May. 20, 2026
- * @version Jun.  4, 2026
+ * @version Jul. 29, 2026
  * @author  ASAMI, Tomoharu
  */
 final class BridgeContractSpec extends AnyFunSuite {
@@ -22,11 +22,14 @@ final class BridgeContractSpec extends AnyFunSuite {
       "README.md",
       "contract.json",
       "request-generate.json",
+      "request-rebind-generation-provenance.json",
+      "request-prepare-development-runtime-evidence.json",
       "request-package-car.json",
       "request-package-sar.json",
       "request-publish-car.json",
       "request-publish-sar.json",
       "request-publish-project.json",
+      "request-publish-video.json",
       "request-distribute-samples.json",
       "request-index-warehouse.json",
       "response-success.json",
@@ -62,6 +65,19 @@ final class BridgeContractSpec extends AnyFunSuite {
       )
     )
     val expected = Files.readString(_fixture_dir.resolve("request-package-car.json"))
+    assert(_normalize_json(json) == _normalize_json(expected))
+  }
+
+  test("generated bridge request JSON matches canonical development runtime evidence fixture") {
+    val json = CozySbtBridge.renderRequestJsonForTest(
+      action = "prepare-development-runtime-evidence",
+      arguments = Vector(
+        "--project-dir", "/tmp/sample-project",
+        "--runtime-classpath-file", "/tmp/sample-project/target/cncf.d/runtime-classpath.txt",
+        "--save", "/tmp/sample-project/target/cncf.d/car-runtime-manifest.json"
+      )
+    )
+    val expected = Files.readString(_fixture_dir.resolve("request-prepare-development-runtime-evidence.json"))
     assert(_normalize_json(json) == _normalize_json(expected))
   }
 
