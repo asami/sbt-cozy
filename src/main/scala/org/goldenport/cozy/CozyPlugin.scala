@@ -978,7 +978,10 @@ object CozyPlugin extends AutoPlugin {
     cozyRuntimeEvidenceFiles := {
       val classpath = cozyRuntimeClasspathFile.value
       val manifest = cozyDevelopmentRuntimeManifest.value
-      Seq(classpath, manifest)
+      val descriptor = target.value / "cncf.d" / "component-descriptor.json"
+      if (!descriptor.isFile)
+        sys.error(s"[sbt-cozy] development runtime descriptor was not generated: ${descriptor.getAbsolutePath}")
+      Seq(classpath, descriptor, manifest)
     },
 
     cozyPrepareRuntime := {

@@ -29,7 +29,7 @@ def _runtime_classpath_manifest_sha256_(file: File): String =
   }.getOrElse(sys.error("development runtime manifest is invalid JSON"))
 
 lazy val verifyInitialRuntimeEvidence = taskKey[Unit](
-  "Verify the initial stable development-runtime evidence pair."
+  "Verify the initial stable development-runtime evidence projection."
 )
 lazy val rewriteRuntimeContractEvidence = taskKey[Unit](
   "Change a stable descriptor and ABI input so runtime evidence must regenerate."
@@ -48,12 +48,14 @@ lazy val root = (project in file("."))
     verifyInitialRuntimeEvidence := {
       val evidence = cozyRuntimeEvidenceFiles.value
       val classpath = target.value / "cncf.d" / "runtime-classpath.txt"
+      val descriptor = target.value / "cncf.d" / "component-descriptor.json"
       val manifest = target.value / "cncf.d" / "car-runtime-manifest.json"
-      if (evidence != Seq(classpath, manifest) || !classpath.isFile || !manifest.isFile)
-        sys.error(s"cozyPrepareRuntime did not produce the complete evidence pair: $evidence")
+      if (evidence != Seq(classpath, descriptor, manifest) || !classpath.isFile || !descriptor.isFile || !manifest.isFile)
+        sys.error(s"cozyPrepareRuntime did not produce the complete evidence projection: $evidence")
       val text = IO.read(manifest)
-      if (!text.contains("cncf.car-development-runtime-manifest.v1") ||
+      if (!text.contains("cncf.car-development-runtime-manifest.v2") ||
           !text.contains("development-directory") ||
+          !text.contains("target/cncf.d/component-descriptor.json") ||
           text.contains("target/scala"))
         sys.error(s"development manifest has the wrong stable-evidence shape: $manifest")
       val actualclasspathsha256 = _runtime_classpath_sha256_(classpath)
@@ -77,6 +79,9 @@ lazy val root = (project in file("."))
       val current = IO.read(target.value / "cncf.d" / "car-runtime-manifest.json")
       if (current == initial || !current.contains("0.1.0-SNAPSHOT"))
         sys.error("development runtime evidence was not regenerated from the changed stable contract inputs")
+      val descriptor = IO.read(target.value / "cncf.d" / "component-descriptor.json")
+      if (!descriptor.contains("evidenceRevision") || !descriptor.contains("\"2\""))
+        sys.error("development descriptor was not regenerated from the changed stable contract inputs")
       val classpath = target.value / "cncf.d" / "runtime-classpath.txt"
       val actualclasspathsha256 = _runtime_classpath_sha256_(classpath)
       if (_runtime_classpath_manifest_sha256_(target.value / "cncf.d" / "car-runtime-manifest.json") != actualclasspathsha256)
