@@ -20,7 +20,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul. 29, 2026
+ * @version Aug.  1, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
@@ -633,10 +633,16 @@ object CozyPlugin extends AutoPlugin {
       val modelmetadata =
         Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile).toSeq ++
           ((target.value / "cozy" / "model-metadata") ** "*.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+      val hascmlstylesnapshot = modelmetadata.exists(CozyManifestMetadata.hasCmlStyleSnapshot)
       val abimanifestoutput = target.value / "cozy" / "abi-manifest.json"
       if (abimanifestoutput.isFile)
         IO.delete(abimanifestoutput)
-      val packagingmetadata = CozyManifestMetadata.from(cozyManifestMetadata.value, moduleName.value, version.value)
+      val packagingmetadata = CozyManifestMetadata.from(
+        cozyManifestMetadata.value,
+        moduleName.value,
+        version.value,
+        hascmlstylesnapshot
+      )
       CozySbtBridge.packageCar(
         archive = archive,
         mainjar = mainjar,
@@ -700,6 +706,7 @@ object CozyPlugin extends AutoPlugin {
       validatePublishVersion(version.value, "cozyPublishCar", expectsnapshot = false)
       Def.task {
         val archive = cozyBuildCar.value
+        val modelmetadata = Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile)
         val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
         val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", artifactname, version.value)
         CozySbtBridge.publishCar(
@@ -708,6 +715,7 @@ object CozyPlugin extends AutoPlugin {
           name = artifactname,
           version = version.value,
           archive = archive,
+          modelmetadata = modelmetadata,
           basedir = baseDirectory.value,
           delegateprojectdir = cozyDelegateProjectDir.value,
           delegatecommand = cozyDelegateCommand.value,
@@ -748,6 +756,7 @@ object CozyPlugin extends AutoPlugin {
       validatePublishVersion(version.value, "cozyPublishLocalCar", expectsnapshot = true)
       Def.task {
         val archive = cozyBuildCar.value
+        val modelmetadata = Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile)
         val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
         val localwarehouse = cozyLocalWarehouseDir.value
         val destination = _repository_artifact_destination(localwarehouse, "car", artifactname, version.value)
@@ -757,6 +766,7 @@ object CozyPlugin extends AutoPlugin {
           name = artifactname,
           version = version.value,
           archive = archive,
+          modelmetadata = modelmetadata,
           basedir = baseDirectory.value,
           delegateprojectdir = cozyDelegateProjectDir.value,
           delegatecommand = cozyDelegateCommand.value,
@@ -2751,7 +2761,12 @@ private[cozy] object CozyManifestMetadata {
   private val _componentlet_prefix = "componentlet."
   private val _descriptor_json_key = "componentDescriptorJson"
 
-  def from(metadata: Map[String, String], defaultcomponent: String, version: String): CozyPackageMetadata = {
+  def from(
+    metadata: Map[String, String],
+    defaultcomponent: String,
+    version: String,
+    hascmlstylesnapshot: Boolean = false
+  ): CozyPackageMetadata = {
     val component = metadata.getOrElse(_component_key, defaultcomponent)
     val componentletnames = _componentlet_names(metadata)
     val reservedkeys = Set(_component_key, _componentlets_key, _descriptor_json_key) ++
@@ -2760,10 +2775,13 @@ private[cozy] object CozyManifestMetadata {
     val descriptorjson = _descriptor_json(defaultcomponent, component, version, passthroughextensions, componentletnames, metadata)
     CozyPackageMetadata(
       component = component,
-      extensions = passthroughextensions + (_descriptor_json_key -> descriptorjson),
+      extensions = if (hascmlstylesnapshot) passthroughextensions else passthroughextensions + (_descriptor_json_key -> descriptorjson),
       config = Map.empty
     )
   }
+
+  def hasCmlStyleSnapshot(file: File): Boolean =
+    IO.read(file).contains("\"componentStyle\"")
 
   private def _componentlet_names(metadata: Map[String, String]): Vector[String] = {
     val fromlist = metadata
@@ -3072,6 +3090,7 @@ private[cozy] object CozySbtBridge {
     name: String,
     version: String,
     archive: File,
+    modelmetadata: Option[File],
     basedir: File,
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
@@ -3091,7 +3110,7 @@ private[cozy] object CozySbtBridge {
             version,
             "--car",
             archive.getAbsolutePath
-          )
+          ) ++ modelmetadata.toVector.flatMap(file => Vector("--model-metadata", file.getAbsolutePath))
       ),
       basedir,
       delegateprojectdir,

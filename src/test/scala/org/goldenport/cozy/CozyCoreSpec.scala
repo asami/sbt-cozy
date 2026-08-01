@@ -15,7 +15,7 @@ import sbt._
  *  version Apr. 23, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Jul. 12, 2026
+ * @version Aug.  1, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -1007,6 +1007,18 @@ final class CozyManifestMetadataSpec extends CozyTestBase {
     val descriptor = metadata.extensions("componentDescriptorJson")
     assert(descriptor.contains("\"version\":\"0.2.0-SNAPSHOT\""))
     assert(!descriptor.contains("\"version\":\"0.1.0\""))
+  }
+
+  test("CML style snapshots retain sole component descriptor authority") {
+    val metadata = CozyManifestMetadata.from(
+      Map("component" -> "textus-art-scene", "boundedContext" -> "art-scene"),
+      defaultcomponent = "textus-art-scene",
+      version = "0.1.2-SNAPSHOT",
+      hascmlstylesnapshot = true
+    )
+
+    assert(metadata.extensions.get("boundedContext").contains("art-scene"))
+    assert(metadata.extensions.get("componentDescriptorJson").isEmpty)
   }
 }
 
