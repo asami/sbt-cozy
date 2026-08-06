@@ -20,11 +20,16 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Aug.  1, 2026
+ *  version Aug.  1, 2026
+ * @version Aug.  7, 2026
  * @author  ASAMI, Tomoharu
  */
-final case class CozyProjectConfig(values: Map[String, String], lists: Map[String, Seq[String]]) {
+final case class CozyProjectConfig(
+  values: Map[String, String],
+  lists: Map[String, Seq[String]]
+) {
   def value(path: String): Option[String] = values.get(path).map(_.trim).filter(_.nonEmpty)
+  def isAuthored(path: String): Boolean = values.contains(path) || lists.contains(path)
   def boolean(path: String): Option[Boolean] = value(path).map(_.toLowerCase(java.util.Locale.ROOT)).collect {
     case "true" | "yes" | "on" => true
     case "false" | "no" | "off" => false
@@ -69,16 +74,29 @@ object CozyProjectConfig {
             val key = trimmed.substring(0, n).trim
             val rest = trimmed.substring(n + 1).trim
             stack = stack.dropRight(stack.reverse.takeWhile(_._1 >= indent).length)
-            if (rest.isEmpty)
+            val path = (stack.map(_._2) :+ key).mkString(".")
+            if (rest.isEmpty && _canonical_identity_path(path)) {
+              values = values.updated(path, "")
+            } else if (rest.isEmpty) {
               stack = stack :+ (indent -> key)
-            else
-              values = values.updated((stack.map(_._2) :+ key).mkString("."), _unquote(rest))
+            } else
+              values = values.updated(path, _scalar(path, rest))
           }
         }
       }
     }
     CozyProjectConfig(values, lists)
   }
+
+  private def _scalar(path: String, s: String): String = {
+    val t = s.trim
+    if (_canonical_identity_path(path) && (t == "null" || t == "~")) "" else _unquote(t)
+  }
+
+  private def _canonical_identity_path(path: String): Boolean =
+    path == "project.namespace" ||
+      path == "project.id" ||
+      path == "project.component.version"
 
   private def _unquote(s: String): String = {
     val t = s.trim

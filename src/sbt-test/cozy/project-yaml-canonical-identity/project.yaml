@@ -1,0 +1,34 @@
+project:
+  namespace: org.simplemodeling.textus
+  id: UserAccount
+  kind: car
+  name: textus-user-account
+  organization: org.simplemodeling.textus
+  scalaPackage: org.simplemodeling.textus.useraccount
+  component:
+    name: UserAccount
+    className: UserAccountComponent
+    version: 0.6.0-SNAPSHOT
+  identity:
+    qualified: org.simplemodeling.textus.UserAccount
+    organization: org.simplemodeling.textus
+    artifact: textus-user-account
+    jvmPackage: org.simplemodeling.textus.useraccount
+    generatedClass: UserAccountComponent
+    path: user-account
+build:
+  scalaVersion: "3.3.8"
+  cozyVersion: "0.1.17-SNAPSHOT"
+packaging:
+  kind: car
+  car:
+    manifest_metadata:
+      component: org.simplemodeling.textus.UserAccount
+      namespace: org.simplemodeling.textus
+      id: UserAccount
+      qualifiedIdentity: org.simplemodeling.textus.UserAccount
+      organization: org.simplemodeling.textus
+      artifact: textus-user-account
+      jvmPackage: org.simplemodeling.textus.useraccount
+      generatedClass: UserAccountComponent
+      path: user-account

@@ -1,9 +1,13 @@
 package org.goldenport.cozy
 
 /*
- * Scenario-only SPI for the Phase 56 CID-01 contract.  The DTOs deliberately
- * carry strings and metadata only; identity validation and projections belong
- * to the later CID implementation slices.
+ * Scenario SPI for the Phase 56 CID-01 contract. Namespace-retention remains
+ * deliberately deferred to CID-04; agreement and metadata admission use the
+ * public project identity contract.
+ *
+ * @since   Aug.  7, 2026
+ * @version Aug.  7, 2026
+ * @author  ASAMI, Tomoharu
  */
 private[cozy] sealed trait CarCoordinateContractScenarioRequest {
   def scenarioId: String
@@ -13,24 +17,24 @@ private[cozy] object CarCoordinateContractScenarioRequest {
   final case class CanonicalAgreement(
     scenarioId: String,
     namespace: String,
-    localid: String,
+    localId: String,
     version: String
   ) extends CarCoordinateContractScenarioRequest
 
   final case class NamespaceRetention(
     scenarioId: String,
-    firstnamespace: String,
-    secondnamespace: String,
-    localid: String,
+    firstNamespace: String,
+    secondNamespace: String,
+    localId: String,
     version: String
   ) extends CarCoordinateContractScenarioRequest
 
   final case class MetadataAdmission(
     scenarioId: String,
     namespace: String,
-    localid: String,
+    localId: String,
     version: String,
-    compatibilitymetadata: Map[String, String]
+    compatibilityMetadata: Map[String, String]
   ) extends CarCoordinateContractScenarioRequest
 }
 
@@ -46,20 +50,20 @@ private[cozy] object CarCoordinateContractScenarioReport {
   final case class Agreement(
     scenarioId: String,
     organization: String,
-    modulename: String,
+    moduleName: String,
     version: String,
-    mavenartifact: String,
-    carfilename: String,
-    manifestcomponent: String,
-    descriptorcomponent: String,
-    jvmpackage: String,
-    generatedclass: String
+    mavenArtifact: String,
+    carFilename: String,
+    manifestComponent: String,
+    descriptorComponent: String,
+    jvmPackage: String,
+    generatedClass: String
   ) extends CarCoordinateContractScenarioReport
 
   final case class NamespaceIsolated(
     scenarioId: String,
-    dependencykeys: Vector[String],
-    repositorykeys: Vector[String],
+    dependencyKeys: Vector[String],
+    repositoryKeys: Vector[String],
     filenames: Vector[String]
   ) extends CarCoordinateContractScenarioReport
 
@@ -72,6 +76,64 @@ private[cozy] object CarCoordinateContractScenarioReport {
 private[cozy] object CarCoordinateContractScenarioSpi {
   def evaluate(
     request: CarCoordinateContractScenarioRequest
-  ): CarCoordinateContractScenarioReport =
-    CarCoordinateContractScenarioReport.NotImplemented(request.scenarioId)
+  ): CarCoordinateContractScenarioReport = request match {
+    case request: CarCoordinateContractScenarioRequest.CanonicalAgreement =>
+      _admit(request.scenarioId, request.namespace, request.localId, request.version, Map.empty)
+    case request: CarCoordinateContractScenarioRequest.MetadataAdmission =>
+      _admit(request.scenarioId, request.namespace, request.localId, request.version, request.compatibilityMetadata)
+    case request: CarCoordinateContractScenarioRequest.NamespaceRetention =>
+      CarCoordinateContractScenarioReport.NotImplemented(request.scenarioId)
+  }
+
+  private def _admit(
+    scenarioid: String,
+    namespace: String,
+    localid: String,
+    version: String,
+    compatibilitymetadata: Map[String, String]
+  ): CarCoordinateContractScenarioReport = {
+    val paths = compatibilitymetadata.map { case (key, value) => _compatibility_path(key) -> value }
+    val config = CozyProjectConfig(
+      Map(
+        "project.namespace" -> namespace,
+        "project.id" -> localid,
+        "project.component.version" -> version
+      ) ++ paths,
+      Map.empty
+    )
+    CozyProjectIdentityContract.admit(config, "3") match {
+      case Right(evidence) =>
+        val metadata = CozyManifestMetadata.from(
+          evidence.manifestMetadata,
+          evidence.moduleName.getOrElse(""),
+          evidence.effectiveVersion
+        )
+        val descriptor = metadata.extensions.getOrElse("componentDescriptorJson", "")
+        val descriptorcomponent = "\"component\":\"" + metadata.component + "\""
+        CarCoordinateContractScenarioReport.Agreement(
+          scenarioid,
+          evidence.organization.getOrElse(""),
+          evidence.moduleName.getOrElse(""),
+          evidence.effectiveVersion,
+          evidence.moduleName.map(_ + "_3").getOrElse(""),
+          evidence.carFilename.getOrElse(""),
+          metadata.component,
+          if (descriptor.contains(descriptorcomponent)) metadata.component else "",
+          evidence.jvmPackage.getOrElse(""),
+          evidence.generatedClass.getOrElse("")
+        )
+      case Left(reason) =>
+        CarCoordinateContractScenarioReport.Rejected(scenarioid, reason)
+    }
+  }
+
+  private def _compatibility_path(key: String): String = key match {
+    case "organization" => "project.organization"
+    case "artifact" => "project.name"
+    case "scalaPackage" => "project.scalaPackage"
+    case "package" => "project.package"
+    case "component" => "project.component.name"
+    case "className" => "project.component.className"
+    case other => other
+  }
 }
