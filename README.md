@@ -2,6 +2,8 @@
 
 `sbt-cozy` is an `sbt` plugin that generates Scala sources from CML files under `src/main/cozy` and builds CAR/SAR archives.
 
+This development line requires JDK 17 or newer because its normal runtime identity dependency uses a Java 17 classfile ABI.
+
 ## Development Runtime Preparation
 
 For a CAR selected through CNCF `--component-dev-dir`, run:
