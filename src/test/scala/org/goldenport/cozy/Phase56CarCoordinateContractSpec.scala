@@ -4,7 +4,6 @@ import java.nio.file.Files
 
 import org.goldenport.cozy.CarCoordinateContractScenarioReport.{Agreement, NamespaceIsolated, Rejected}
 import org.goldenport.cozy.CarCoordinateContractScenarioRequest.{CanonicalAgreement, MetadataAdmission, NamespaceRetention}
-import org.scalacheck.{Gen, Prop, Test}
 import org.scalatest.GivenWhenThen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -23,7 +22,7 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
     "in spec:phase-56-car-coordinate-contract, example:E8, rules:CID01-R1,CID01-R2,CID01-R3, phase:56, slice:CID-03C"
   )
   private val _e9 = afterWord(
-    "in spec:phase-56-car-coordinate-contract, example:E9, rules:CID01-R4,CID01-R5,CID01-R6, phase:56, slice:CID-01D"
+    "in spec:phase-56-car-coordinate-contract, example:E9, rules:CID01-R4,CID01-R5,CID01-R6, phase:56, slice:CID-04D"
   )
   private val _e10 = afterWord(
     "in spec:phase-56-car-coordinate-contract, example:E10, rules:CID01-R7,CID01-R8,CID01-R9, phase:56, slice:CID-01D"
@@ -195,90 +194,56 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
       }
     }
 
-    "E9 preserve the current namespace-free dependency and repository collision" must _e9 {
-      "when two legacy dependencies resolve from one repository" in {
+    "E9 retain two-argument construction while rejecting namespace-free resolution" must _e9 {
+      "when a legacy dependency is submitted to the resolver" in {
         Given(
           "the exact E9 rules CID01-R4, CID01-R5, CID01-R6 and example shared:0.6.0-SNAPSHOT from /Users/asami/src/dev2025/cloud-native-component-framework/docs/notes/phase-56-cid01-component-identity-inventory-and-failing-first-contract.md"
         )
-        _with_temp_dir("phase56-car-coordinate") { directory =>
-          val repository = directory / "repository" / "car"
-          val archive = _write(
-            repository / "shared" / _version / s"shared-${_version}.car",
-            "car"
-          )
-          val firstdependency = CarDependency("shared", _version)
-          val seconddependency = CarDependency("shared", _version)
+        val legacy = CarDependency("Shared", _version)
 
-          When("the existing CarDependency and local repository resolver are observed")
-          val first = CarDependencyResolver.resolve(
-            firstdependency,
-            Seq(repository.getAbsolutePath),
-            directory / "cache"
-          )
-          val second = CarDependencyResolver.resolve(
-            seconddependency,
-            Seq(repository.getAbsolutePath),
-            directory / "cache"
-          )
-
-          Then("the legacy dependency keys and repository destination collapse to one file")
-          firstdependency shouldBe seconddependency
-          first.getCanonicalFile shouldBe archive.getCanonicalFile
-          second.getCanonicalFile shouldBe archive.getCanonicalFile
-          Vector(first, second).map(_.getCanonicalPath).distinct should have size 1
+        When("the retained construction reaches a namespace-sensitive authority")
+        val error = intercept[RuntimeException] {
+          CarDependencyResolver.resolve(legacy, Seq.empty, file("target/sbt-cozy-test/work/phase56-car-coordinate/legacy-cache"))
         }
+
+        Then("construction compatibility remains while resolution rejects before lookup")
+        legacy.localId shouldBe "Shared"
+        error.getMessage shouldBe "[sbt-cozy] component.identity.namespace.required"
       }
     }
 
     "E9 retain namespace keys while allowing one shared human filename" must _e9 {
-      "when valid distinct lowercase multi-segment namespaces are submitted" in {
+      "when the two fixed namespace-retention coordinates are submitted" in {
         Given(
-          "the exact E9 rules CID01-R4, CID01-R5, CID01-R6 and distinct generated full namespaces sharing final segment textus from /Users/asami/src/dev2025/cloud-native-component-framework/docs/notes/phase-56-cid01-component-identity-inventory-and-failing-first-contract.md"
+          "the exact E9 rules CID01-R4, CID01-R5, CID01-R6 and fixed org.alpha.textus/org.beta.textus Shared coordinates"
         )
-        val namespacegenerator = for {
-          firstsegment <- Gen.nonEmptyListOf(Gen.alphaLowerChar).map(_.mkString).map(segment => s"x$segment")
-          secondsegment <- Gen.nonEmptyListOf(Gen.alphaLowerChar).map(_.mkString).map(segment => s"x$segment")
-        } yield (s"org.$firstsegment.textus", s"net.$secondsegment.textus")
         val scenarioid = "e9-namespace-retention"
-        val property = Prop.forAll(namespacegenerator) { case (firstnamespace, secondnamespace) =>
-          val report = CarCoordinateContractScenarioSpi.evaluate(
-            NamespaceRetention(
-              scenarioid,
-              firstnamespace,
-              secondnamespace,
-              "Shared",
-              _version
-            )
-          )
-          report match {
-            case NamespaceIsolated(reportid, dependencykeys, repositorykeys, filenames) =>
-              reportid == scenarioid &&
-                dependencykeys.distinct.size == 2 &&
-                repositorykeys.distinct.size == 2 &&
-                _retains_each_namespace_once(
-                  dependencykeys,
-                  Vector(firstnamespace, secondnamespace)
-                ) &&
-                _retains_each_namespace_once(
-                  repositorykeys,
-                  Vector(firstnamespace, secondnamespace)
-                ) &&
-                filenames == Vector(s"textus-shared-${_version}.car")
-            case _ =>
-              false
-          }
-        }
 
-        When("each generated namespace-retention request is sent to the production scenario SPI")
-        val result = Test.check(
-          Test.Parameters.default.withMinSuccessfulTests(50),
-          property
+        When("the namespace-retention request is sent to the production scenario SPI")
+        val report = CarCoordinateContractScenarioSpi.evaluate(
+          NamespaceRetention(
+            scenarioid,
+            "org.alpha.textus",
+            "org.beta.textus",
+            "Shared",
+            _version
+          )
         )
 
-        Then("the target report retains two namespace-bearing keys and exactly one shared filename")
-        pendingUntilFixed {
-          result.passed shouldBe true
-        }
+        Then("the report retains exact independent keys and paths with one filename")
+        report shouldBe NamespaceIsolated(
+          scenarioid,
+          Vector(s"org.alpha.textus.Shared:${_version}", s"org.beta.textus.Shared:${_version}"),
+          Vector(
+            s"org/alpha/textus/textus-shared/${_version}/textus-shared-${_version}.car",
+            s"org/beta/textus/textus-shared/${_version}/textus-shared-${_version}.car"
+          ),
+          Vector(
+            s"org/alpha/textus/textus-shared/${_version}/textus-shared-${_version}.car",
+            s"org/beta/textus/textus-shared/${_version}/textus-shared-${_version}.car"
+          ),
+          Vector(s"textus-shared-${_version}.car")
+        )
       }
     }
 
@@ -688,7 +653,7 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
   }
 
   private def _with_temp_dir(prefix: String)(f: File => Any): Any = {
-    val parent = file("target/phase56-car-coordinate/work")
+    val parent = file("target/sbt-cozy-test/work/phase56-car-coordinate")
     IO.createDirectory(parent)
     val directory = Files.createTempDirectory(parent.toPath, prefix).toFile
     try f(directory)

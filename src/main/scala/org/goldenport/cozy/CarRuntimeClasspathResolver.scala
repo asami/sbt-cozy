@@ -15,7 +15,7 @@ import sbt.{file, IO}
  * project.
  *
  * @since   Jul. 28, 2026
- * @version Jul. 28, 2026
+ * @version Aug.  7, 2026
  * @author  ASAMI, Tomoharu
  */
 private[cozy] object CarRuntimeClasspathResolver {
@@ -78,8 +78,8 @@ private[cozy] object CarRuntimeClasspathResolver {
     car: File,
     outputdirectory: File
   ): Seq[File] = {
-    val output =
-      new File(new File(outputdirectory, dependency.name), dependency.version)
+    val coordinate = CarComponentIdentityAdapter._require_release(dependency)
+    val output = new File(outputdirectory, coordinate._car_cache_relative_path).getParentFile
     IO.delete(output)
     IO.createDirectory(output)
     IO.unzip(car, output).toSeq.

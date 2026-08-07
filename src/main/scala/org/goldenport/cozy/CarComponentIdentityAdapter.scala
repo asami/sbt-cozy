@@ -5,18 +5,31 @@ import org.goldenport.cncf.component.identity.{
   ComponentIdentityProjection,
   ComponentIdentityResult,
   ComponentLocalId,
-  ComponentNamespace
+  ComponentNamespace,
+  ComponentReleaseCoordinate
 }
 
 import scala.collection.JavaConverters._
 
 private[cozy] final case class CarComponentReleaseProjection(
   identity: ComponentIdentityProjection,
-  carfilename: String,
-  mavencoordinate: String
-)
+  coordinate: ComponentReleaseCoordinate,
+  scalamavencoordinate: String
+) {
+  def _release: String = coordinate.release()
+  def _dependency_key: String = coordinate.dependencyKey()
+  def _maven_release_key: String = coordinate.mavenReleaseKey()
+  def _group_path: String = coordinate.groupPath()
+  def _car_filename: String = coordinate.carFilename()
+  def _car_repository_relative_path: String = coordinate.carRepositoryRelativePath()
+  def _car_cache_relative_path: String = coordinate.carCacheRelativePath()
+  def carfilename: String = _car_filename
+  def mavencoordinate: String = scalamavencoordinate
+}
 
 private[cozy] object CarComponentIdentityAdapter {
+  private val _namespace_required = "component.identity.namespace.required"
+
   def project(
     namespace: String,
     localId: String
@@ -29,12 +42,22 @@ private[cozy] object CarComponentIdentityAdapter {
     scalaBinaryVersion: String,
     release: String
   ): Either[ComponentIdentityResult.Error, CarComponentReleaseProjection] =
-    project(namespace, localId).flatMap { identity =>
-      _either(identity.carFilename(release)).flatMap { carfilename =>
-        _either(identity.mavenCoordinate(scalaBinaryVersion, release)).map { mavencoordinate =>
-          CarComponentReleaseProjection(identity, carfilename, mavencoordinate)
+    _component_id(namespace, localId).flatMap { componentid =>
+      _either(ComponentReleaseCoordinate.create(componentid, release)).flatMap { coordinate =>
+        val identity = ComponentIdentityProjection.of(componentid)
+        _either(identity.mavenCoordinate(scalaBinaryVersion, release)).map { maven =>
+          CarComponentReleaseProjection(identity, coordinate, maven)
         }
       }
+    }
+
+  def _require_release(dependency: CarDependency): CarComponentReleaseProjection =
+    dependency.namespace match {
+      case Some(namespace) =>
+        projectRelease(namespace, dependency.localId, "3", dependency.version).
+          fold(error => sys.error(s"[sbt-cozy] ${error.code()}"), identity)
+      case None =>
+        sys.error(s"[sbt-cozy] ${_namespace_required}")
     }
 
   def validateNoScopedCollisions(
@@ -68,8 +91,5 @@ private[cozy] object CarComponentIdentityAdapter {
   private def _either[A](
     result: ComponentIdentityResult[A]
   ): Either[ComponentIdentityResult.Error, A] =
-    if (result.isSuccess())
-      Right(result.value().get())
-    else
-      Left(result.error().get())
+    if (result.isSuccess()) Right(result.value().get()) else Left(result.error().get())
 }

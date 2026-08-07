@@ -8,11 +8,33 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Jul. 28, 2026
+ * @version Aug.  7, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
   "Cozy delegated generation" should {
+    "project canonical component generation settings without module fallback" in {
+      Given("an admitted canonical CAR project identity")
+      val metadata = CozyProjectConfig.parse(Seq(
+        "project:",
+        "  namespace: org.alpha.textus",
+        "  id: Shared",
+        "  component:",
+        "    version: 0.6.0-SNAPSHOT"
+      ))
+
+      When("delegated generation settings are projected")
+      val settings = CarPublicationCoordinate._generation_settings(metadata, "3")
+
+      Then("the bridge receives canonical namespace, ID, and release only")
+      settings shouldBe Map(
+        "component.namespace" -> "org.alpha.textus",
+        "component.id" -> "Shared",
+        "component.version" -> "0.6.0-SNAPSHOT"
+      )
+      settings should not contain key("component.module")
+    }
+
     "bind project-owned generation versions" which {
       "derive the exact Cozy generator and CNCF target from project metadata" in {
         Given("project metadata with one exact generator and one CNCF compile dependency")
@@ -227,8 +249,8 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
 
       "report the exact unavailable generator and recovery action" in {
         Given("a failed delegated launch for one project-owned Cozy coordinate")
-        val source = file("/tmp/model.cml")
-        val cwd = file("/tmp/project")
+        val source = file("target/sbt-cozy-test/work/cozy-delegated-generator-failure/model.cml")
+        val cwd = file("target/sbt-cozy-test/work/cozy-delegated-generator-failure/project")
         val command = Seq(
           "cs", "launch", "cozy", "--", "--runtime", "0.3.1-SNAPSHOT"
         )
@@ -526,7 +548,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         When("the request JSON is rendered")
         val json = CozySbtBridge.renderRequestJsonForTest(
           action = "generate",
-          arguments = Vector("modeler-scala", "/tmp/model.cml", "--save", "/tmp/out"),
+          arguments = Vector("modeler-scala", "target/sbt-cozy-test/work/cozy-delegated-generator/model.cml", "--save", "target/sbt-cozy-test/work/cozy-delegated-generator/out"),
           settings = settings
         )
 
@@ -549,7 +571,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
             savedir = savedir,
             settings = Map(
               "generation.versions.cncf" -> "0.4.11",
-              "sbt.project_dir" -> "/tmp/wrong-project"
+              "sbt.project_dir" -> "target/sbt-cozy-test/work/cozy-delegated-generator/wrong-project"
             )
           )
           val json = IO.read(file(execution.command.last))
@@ -557,7 +579,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           Then("the actual project directory replaces the stale setting")
           json should include(""""generation.versions.cncf": "0.4.11"""")
           json should include(s""""sbt.project_dir": "${dir.getAbsoluteFile.toPath.normalize.toString}"""")
-          json should not include "/tmp/wrong-project"
+          json should not include "target/sbt-cozy-test/work/cozy-delegated-generator/wrong-project"
         }
       }
 
@@ -572,7 +594,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
             delegateprojectdir = None,
             delegatecommand = command,
             action = "generate",
-            arguments = Vector("modeler-scala", "/tmp/model.cml", "--save", "/tmp/out")
+            arguments = Vector("modeler-scala", "target/sbt-cozy-test/work/cozy-delegated-generator/model.cml", "--save", "target/sbt-cozy-test/work/cozy-delegated-generator/out")
           )
 
           Then("the launcher command keeps the runtime and bridge arguments")
@@ -619,7 +641,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
             delegateprojectdir = Some(cozydir),
             delegatecommand = Seq("cozy"),
             action = "package-sar",
-            arguments = Vector("--save", "/tmp/sample.sar")
+            arguments = Vector("--save", "target/sbt-cozy-test/work/cozy-delegated-generator/sample.sar")
           )
 
           Then("sbt runs the local Cozy main class")
@@ -674,7 +696,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
             arguments = Vector(
               "--consumer-descriptor", consumer.getAbsolutePath,
               "--output-dir", outputdir.getAbsolutePath,
-              "--dependency", s"provider\t0.1.0\t${archive.getAbsolutePath}"
+              "--dependency", s"org.example.component\tProvider\t0.1.0\t${archive.getAbsolutePath}"
             )
           )
           val request = IO.read(file(resolved.last))
@@ -683,16 +705,18 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           request should include("\"action\": \"resolve-component-api-dependencies\"")
           request should include(consumer.getAbsolutePath)
           request should include(outputdir.getAbsolutePath)
-          request should include("provider\\t0.1.0\\t")
+          request should include("org.example.component\\tProvider\\t0.1.0\\t")
         }
       }
     }
   }
 
   private def _with_temp_dir[A](prefix: String)(f: File => A): A = {
-    val dir = Files.createTempDirectory(prefix).toFile
-    try f(dir)
-    finally IO.delete(dir)
+    val parent = file("target/sbt-cozy-test/work/cozy-delegated-generator")
+    IO.createDirectory(parent)
+    val directory = Files.createTempDirectory(parent.toPath, s"${prefix}-").toFile
+    try f(directory)
+    finally IO.delete(directory)
   }
 
   private def _write(path: File, content: String): File = {

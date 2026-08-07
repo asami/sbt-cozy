@@ -1,0 +1,5 @@
+project:
+  namespace: phase56.fixture
+  id: Consumer
+  component:
+    version: 0.1.0

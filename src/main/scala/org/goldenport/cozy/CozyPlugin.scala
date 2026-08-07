@@ -20,7 +20,6 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- *  version Aug.  1, 2026
  * @version Aug.  7, 2026
  * @author  ASAMI, Tomoharu
  */
@@ -225,6 +224,59 @@ private[cozy] object ComponentApiDependencyResolution {
   def isRequired(dependencies: Seq[CarDependency]): Boolean = dependencies.nonEmpty
 }
 
+private[cozy] final case class CarPublicationProjection(
+  release: CarComponentReleaseProjection,
+  archive: File,
+  destination: File
+)
+
+private[cozy] object CarPublicationCoordinate {
+  def _project(
+    projectmetadata: CozyProjectConfig,
+    scalabinaryversion: String,
+    target: File,
+    warehouse: File
+  ): CarPublicationProjection = {
+    val release = _component_release(projectmetadata, scalabinaryversion)
+    CarPublicationProjection(
+      release,
+      target / release._car_filename,
+      warehouse / "repository" / "car" / release._car_repository_relative_path
+    )
+  }
+
+  def _component_release(
+    projectmetadata: CozyProjectConfig,
+    scalabinaryversion: String
+  ): CarComponentReleaseProjection = {
+    val admitted = CozyProjectIdentityContract.requireAdmitted(projectmetadata, scalabinaryversion)
+    val namespace = admitted.canonicalNamespace.getOrElse(
+      sys.error("[sbt-cozy] component.identity.namespace.required")
+    )
+    val localid = admitted.canonicalLocalId.getOrElse(
+      sys.error("[sbt-cozy] component.identity.local-id.required")
+    )
+    CarComponentIdentityAdapter.projectRelease(
+      namespace,
+      localid,
+      scalabinaryversion,
+      admitted.effectiveVersion
+    ).fold(error => sys.error(s"[sbt-cozy] ${error.code()}"), identity)
+  }
+
+  def _generation_settings(
+    projectmetadata: CozyProjectConfig,
+    scalabinaryversion: String
+  ): Map[String, String] = {
+    val release = _component_release(projectmetadata, scalabinaryversion)
+    Map(
+      "component.namespace" -> release.identity.mavenGroupId(),
+      "component.id" -> release.identity.componentId().localId().value(),
+      "component.version" -> release._release
+    )
+  }
+}
+
 private[cozy] object CozyCncfRuntimeDescriptor {
   private val _entry_path = "META-INF/cncf/runtime.yaml"
 
@@ -395,7 +447,12 @@ object CozyPlugin extends AutoPlugin {
       val packaging = cozyPackaging.value.trim.toLowerCase(java.util.Locale.ROOT)
       packaging == "car" || packaging == "sar"
     },
-    cozyCarName := s"${moduleName.value}-${version.value}",
+    cozyCarName := {
+      CarPublicationCoordinate._component_release(
+        cozyProjectMetadata.value,
+        scalaBinaryVersion.value
+      )._car_filename.stripSuffix(".car")
+    },
     cozySarName := s"${moduleName.value}-${version.value}",
     cozySpiJars := Seq.empty,
     cozyCarDependencies := Seq.empty,
@@ -462,8 +519,6 @@ object CozyPlugin extends AutoPlugin {
         projectmetadata,
         cozyGenerationVersionOverrides.value
       )
-      val componentmodule = moduleName.value
-      val componentversion = version.value
       val skipunchanged = cozySkipUnchangedGeneration.value
       val log = streams.value.log
 
@@ -490,10 +545,8 @@ object CozyPlugin extends AutoPlugin {
           } else {
             Map.empty[String, String]
           }
-        val generationversionoverrides = generationversions ++ runtimesettings ++ Map(
-          "component.module" -> componentmodule,
-          "component.version" -> componentversion
-        )
+        val generationversionoverrides = generationversions ++ runtimesettings ++
+          CarPublicationCoordinate._generation_settings(projectmetadata, scalaBinaryVersion.value)
         if (cozyWebDescriptorSync.value) {
           CozyWebDescriptorSync.sync(
             projectdir = baseDirectory.value,
@@ -632,7 +685,13 @@ object CozyPlugin extends AutoPlugin {
     cozyBuildCar := {
       val sourcedir = cozySourceDir.value
       val log = streams.value.log
-      val archive = target.value / s"${cozyCarName.value}.car"
+      val publication = CarPublicationCoordinate._project(
+        cozyProjectMetadata.value,
+        scalaBinaryVersion.value,
+        target.value,
+        cozyWarehouseDir.value
+      )
+      val archive = publication.archive
 
       val mainjar = (Compile / packageBin).value
       val classpathjars = (Compile / dependencyClasspath).value
@@ -657,8 +716,8 @@ object CozyPlugin extends AutoPlugin {
         IO.delete(abimanifestoutput)
       val packagingmetadata = CozyManifestMetadata.from(
         cozyManifestMetadata.value,
-        moduleName.value,
-        version.value,
+        publication.release.identity.mavenArtifactId(),
+        publication.release._release,
         hascmlstylesnapshot
       )
       CozySbtBridge.packageCar(
@@ -670,8 +729,8 @@ object CozyPlugin extends AutoPlugin {
         modelmetadata = modelmetadata,
         abimanifestoutput = abimanifestoutput,
         projectdir = baseDirectory.value,
-        name = moduleName.value,
-        version = version.value,
+        name = publication.release.identity.mavenArtifactId(),
+        version = publication.release._release,
         component = packagingmetadata.component,
         extensions = packagingmetadata.extensions,
         config = packagingmetadata.config,
@@ -721,17 +780,22 @@ object CozyPlugin extends AutoPlugin {
     cozyBuildSAR := cozyBuildSar.value,
 
     cozyPublishCar := Def.taskDyn {
-      validatePublishVersion(version.value, "cozyPublishCar", expectsnapshot = false)
+      val warehouse = cozyWarehouseDir.value
+      val publication = CarPublicationCoordinate._project(
+        cozyProjectMetadata.value,
+        scalaBinaryVersion.value,
+        target.value,
+        warehouse
+      )
+      validatePublishVersion(publication.release._release, "cozyPublishCar", expectsnapshot = false)
       Def.task {
         val archive = cozyBuildCar.value
         val modelmetadata = Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile)
-        val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
-        val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", artifactname, version.value)
         CozySbtBridge.publishCar(
           projectdir = baseDirectory.value,
-          warehousedir = cozyWarehouseDir.value,
-          name = artifactname,
-          version = version.value,
+          warehousedir = warehouse,
+          name = publication.release.identity.mavenArtifactId(),
+          version = publication.release._release,
           archive = archive,
           modelmetadata = modelmetadata,
           basedir = baseDirectory.value,
@@ -739,8 +803,8 @@ object CozyPlugin extends AutoPlugin {
           delegatecommand = cozyDelegateCommand.value,
           log = streams.value.log
         )
-        streams.value.log.info(s"[sbt-cozy] published Car to ${destination.getAbsolutePath}")
-        destination
+        streams.value.log.info(s"[sbt-cozy] published Car to ${publication.destination.getAbsolutePath}")
+        publication.destination
       }
     }.value,
 
@@ -771,18 +835,22 @@ object CozyPlugin extends AutoPlugin {
     cozyPublishSAR := cozyPublishSar.value,
 
     cozyPublishLocalCar := Def.taskDyn {
-      validatePublishVersion(version.value, "cozyPublishLocalCar", expectsnapshot = true)
+      val localwarehouse = cozyLocalWarehouseDir.value
+      val publication = CarPublicationCoordinate._project(
+        cozyProjectMetadata.value,
+        scalaBinaryVersion.value,
+        target.value,
+        localwarehouse
+      )
+      validatePublishVersion(publication.release._release, "cozyPublishLocalCar", expectsnapshot = true)
       Def.task {
         val archive = cozyBuildCar.value
         val modelmetadata = Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile)
-        val artifactname = cozyPublicationName.value.getOrElse(moduleName.value)
-        val localwarehouse = cozyLocalWarehouseDir.value
-        val destination = _repository_artifact_destination(localwarehouse, "car", artifactname, version.value)
         CozySbtBridge.publishCar(
           projectdir = baseDirectory.value,
           warehousedir = localwarehouse,
-          name = artifactname,
-          version = version.value,
+          name = publication.release.identity.mavenArtifactId(),
+          version = publication.release._release,
           archive = archive,
           modelmetadata = modelmetadata,
           basedir = baseDirectory.value,
@@ -790,8 +858,8 @@ object CozyPlugin extends AutoPlugin {
           delegatecommand = cozyDelegateCommand.value,
           log = streams.value.log
         )
-        streams.value.log.info(s"[sbt-cozy] published local Car to ${destination.getAbsolutePath}")
-        destination
+        streams.value.log.info(s"[sbt-cozy] published local Car to ${publication.destination.getAbsolutePath}")
+        publication.destination
       }
     }.value,
 
@@ -841,13 +909,18 @@ object CozyPlugin extends AutoPlugin {
     }.value,
 
     cozyDistributeCar := {
-      _validate_release_distribution(version.value, cozyDistributionRequireReleaseVersion.value)
+      val publication = CarPublicationCoordinate._project(
+        cozyProjectMetadata.value,
+        scalaBinaryVersion.value,
+        target.value,
+        cozyWarehouseDir.value
+      )
+      _validate_release_distribution(publication.release._release, cozyDistributionRequireReleaseVersion.value)
       val archive = cozyBuildCar.value
-      val destination = _repository_artifact_destination(cozyWarehouseDir.value, "car", version.value, archive)
-      IO.createDirectory(destination.getParentFile)
-      IO.copyFile(archive, destination, preserveLastModified = true)
-      streams.value.log.info(s"[sbt-cozy] distributed CAR to ${destination.getAbsolutePath}")
-      destination
+      IO.createDirectory(publication.destination.getParentFile)
+      IO.copyFile(archive, publication.destination, preserveLastModified = true)
+      streams.value.log.info(s"[sbt-cozy] distributed CAR to ${publication.destination.getAbsolutePath}")
+      publication.destination
     },
 
     cozyDistributeCAR := cozyDistributeCar.value,
@@ -3052,9 +3125,7 @@ private[cozy] object CozySbtBridge {
     delegatecommand: Seq[String],
     log: Logger
   ): Unit = {
-    val dependencyargs = dependencies.toVector.flatMap { case (dependency, archive) =>
-      Vector("--dependency", s"${dependency.name}\t${dependency.version}\t${archive.getAbsolutePath}")
-    }
+    val dependencyargs = _component_api_dependency_arguments(dependencies)
     _run(
       _request(
         action = "resolve-component-api-dependencies",
@@ -3069,6 +3140,17 @@ private[cozy] object CozySbtBridge {
       log
     )
   }
+
+  private[cozy] def _component_api_dependency_arguments(
+    dependencies: Seq[(CarDependency, File)]
+  ): Vector[String] =
+    dependencies.toVector.flatMap { case (dependency, archive) =>
+      val coordinate = CarComponentIdentityAdapter._require_release(dependency)
+      Vector(
+        "--dependency",
+        s"${coordinate.identity.mavenGroupId()}\t${coordinate.identity.componentId().localId().value()}\t${coordinate._release}\t${archive.getAbsoluteFile.toPath.normalize}"
+      )
+    }
 
   def packageSar(
     archive: File,

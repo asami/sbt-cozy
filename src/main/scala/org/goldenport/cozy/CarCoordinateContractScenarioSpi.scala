@@ -1,9 +1,7 @@
 package org.goldenport.cozy
 
 /*
- * Scenario SPI for the Phase 56 CID-01 contract. Namespace-retention remains
- * deliberately deferred to CID-04; agreement and metadata admission use the
- * public project identity contract.
+ * Scenario SPI for the Phase 56 CID-01 contract.
  *
  * @since   Aug.  7, 2026
  * @version Aug.  7, 2026
@@ -64,6 +62,7 @@ private[cozy] object CarCoordinateContractScenarioReport {
     scenarioId: String,
     dependencyKeys: Vector[String],
     repositoryKeys: Vector[String],
+    cachekeys: Vector[String],
     filenames: Vector[String]
   ) extends CarCoordinateContractScenarioReport
 
@@ -82,7 +81,7 @@ private[cozy] object CarCoordinateContractScenarioSpi {
     case request: CarCoordinateContractScenarioRequest.MetadataAdmission =>
       _admit(request.scenarioId, request.namespace, request.localId, request.version, request.compatibilityMetadata)
     case request: CarCoordinateContractScenarioRequest.NamespaceRetention =>
-      CarCoordinateContractScenarioReport.NotImplemented(request.scenarioId)
+      _namespace_retention(request)
   }
 
   private def _admit(
@@ -135,5 +134,30 @@ private[cozy] object CarCoordinateContractScenarioSpi {
     case "component" => "project.component.name"
     case "className" => "project.component.className"
     case other => other
+  }
+
+  private def _namespace_retention(
+    request: CarCoordinateContractScenarioRequest.NamespaceRetention
+  ): CarCoordinateContractScenarioReport = {
+    val coordinates = Vector(request.firstNamespace, request.secondNamespace).map { namespace =>
+      CarComponentIdentityAdapter.projectRelease(
+        namespace,
+        request.localId,
+        "3",
+        request.version
+      )
+    }
+    coordinates.collectFirst { case Left(error) => error } match {
+      case Some(error) => CarCoordinateContractScenarioReport.Rejected(request.scenarioId, error.code())
+      case None =>
+        val admitted = coordinates.collect { case Right(value) => value }
+        CarCoordinateContractScenarioReport.NamespaceIsolated(
+          request.scenarioId,
+          admitted.map(_._dependency_key),
+          admitted.map(_._car_repository_relative_path),
+          admitted.map(_._car_cache_relative_path),
+          admitted.map(_._car_filename).distinct
+        )
+    }
   }
 }

@@ -1,0 +1,10 @@
+> clean
+> publisherProbe/run
+> startRepositorySource
+> set consumer / cozyCarRepositories := Seq(FixtureRepositoryServer.endpoint)
+> consumer/verifyConsumerOnline
+> cncfProbe/run online
+> stopRepositorySource
+> consumer/verifyConsumerOffline
+> cncfProbe/run offline
+> verifyFixtureEvidence
