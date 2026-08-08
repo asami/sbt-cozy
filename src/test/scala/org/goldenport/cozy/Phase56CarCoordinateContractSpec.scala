@@ -11,7 +11,8 @@ import sbt._
 
 /*
  * @since   Aug.  7, 2026
- * @version Aug.  7, 2026
+ *  version Aug.  7, 2026
+ * @version Aug.  8, 2026
  * @author  ASAMI, Tomoharu
  */
 final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -497,7 +498,6 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
           "boundedContext" -> "identity",
           "domain" -> "user-account"
         )
-        val expecteddescriptor = s"""{"name":"${_artifact}","version":"${_version}","component":"${_qualified_identity}","artifact":"${_artifact}","boundedContext":"identity","domain":"user-account","generatedClass":"${_generated_class}","id":"${_local_id}","jvmPackage":"${_jvm_package}","namespace":"${_namespace}","organization":"${_maven_group}","path":"user-account","qualifiedIdentity":"${_qualified_identity}","componentlets":[]}"""
         val allconflicts = Vector(
           "project.name" -> "wrong-project-name",
           "project.organization" -> "wrong-project-organization",
@@ -550,12 +550,12 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
           evidence.manifestMetadata,
           evidence.moduleName.getOrElse(""),
           evidence.effectiveVersion
-        ).extensions("componentDescriptorJson")
+        ).extensions.get("componentDescriptorJson")
         val allconflictsdescriptor = CozyManifestMetadata.from(
           allconflictsevidence.manifestMetadata,
           allconflictsevidence.moduleName.getOrElse(""),
           allconflictsevidence.effectiveVersion
-        ).extensions("componentDescriptorJson")
+        ).extensions.get("componentDescriptorJson")
 
         Then("the public two-field case-class ABI and parsed canonical absence state remain exact")
         direct shouldBe constructed
@@ -597,7 +597,7 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
         evidence.authoredCompatibilityValues shouldBe expectedcompatibilityvalues
         evidence.materializedValues shouldBe expectedcompatibilityvalues
         evidence.manifestMetadata shouldBe expectedmanifestmetadata
-        canonicaldescriptor shouldBe expecteddescriptor
+        canonicaldescriptor shouldBe None
         evidence.diagnosticCodes shouldBe Vector.empty
 
         And("authored blanks, YAML nulls, and partial canonical keys are never legacy fallbacks")
@@ -626,7 +626,7 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
           (Vector(CozyProjectIdentityContract.DISAGREEMENT_CODE) ++ expectedallconflicts).mkString("; ")
         )
         allconflictsevidence.manifestMetadata shouldBe expectedmanifestmetadata
-        allconflictsdescriptor shouldBe expecteddescriptor
+        allconflictsdescriptor shouldBe None
 
         And("legacy evidence retains authored values and version without inventing a canonical namespace")
         legacyevidence.shape shouldBe "legacy"

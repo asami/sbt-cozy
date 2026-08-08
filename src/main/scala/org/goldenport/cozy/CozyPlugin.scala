@@ -20,7 +20,7 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Aug.  7, 2026
+ * @version Aug.  8, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -273,6 +273,8 @@ private[cozy] object CarPublicationCoordinate {
       "component.namespace" -> release.identity.mavenGroupId(),
       "component.id" -> release.identity.componentId().localId().value(),
       "component.version" -> release._release
+    ) ++ projectmetadata.value("project.component.displayName").map(
+      "component.display-name" -> _
     )
   }
 }
@@ -2859,6 +2861,10 @@ private[cozy] object CozyManifestMetadata {
     hascmlstylesnapshot: Boolean = false
   ): CozyPackageMetadata = {
     val component = metadata.getOrElse(_component_key, defaultcomponent)
+    val canonicalcomponent =
+      metadata.get("namespace").exists(_.nonEmpty) &&
+        metadata.get("id").exists(_.nonEmpty) &&
+        metadata.get("qualifiedIdentity").contains(component)
     val componentletnames = _componentlet_names(metadata)
     val reservedkeys = Set(_component_key, _componentlets_key, _descriptor_json_key) ++
       metadata.keySet.filter(_.startsWith(_componentlet_prefix))
@@ -2866,7 +2872,9 @@ private[cozy] object CozyManifestMetadata {
     val descriptorjson = _descriptor_json(defaultcomponent, component, version, passthroughextensions, componentletnames, metadata)
     CozyPackageMetadata(
       component = component,
-      extensions = if (hascmlstylesnapshot) passthroughextensions else passthroughextensions + (_descriptor_json_key -> descriptorjson),
+      extensions =
+        if (hascmlstylesnapshot || canonicalcomponent) passthroughextensions
+        else passthroughextensions + (_descriptor_json_key -> descriptorjson),
       config = Map.empty
     )
   }

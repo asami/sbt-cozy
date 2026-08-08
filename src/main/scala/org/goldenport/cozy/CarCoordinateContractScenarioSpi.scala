@@ -4,7 +4,8 @@ package org.goldenport.cozy
  * Scenario SPI for the Phase 56 CID-01 contract.
  *
  * @since   Aug.  7, 2026
- * @version Aug.  7, 2026
+ *  version Aug.  7, 2026
+ * @version Aug.  8, 2026
  * @author  ASAMI, Tomoharu
  */
 private[cozy] sealed trait CarCoordinateContractScenarioRequest {
@@ -107,8 +108,6 @@ private[cozy] object CarCoordinateContractScenarioSpi {
           evidence.moduleName.getOrElse(""),
           evidence.effectiveVersion
         )
-        val descriptor = metadata.extensions.getOrElse("componentDescriptorJson", "")
-        val descriptorcomponent = "\"component\":\"" + metadata.component + "\""
         CarCoordinateContractScenarioReport.Agreement(
           scenarioid,
           evidence.organization.getOrElse(""),
@@ -117,7 +116,7 @@ private[cozy] object CarCoordinateContractScenarioSpi {
           evidence.moduleName.map(_ + "_3").getOrElse(""),
           evidence.carFilename.getOrElse(""),
           metadata.component,
-          if (descriptor.contains(descriptorcomponent)) metadata.component else "",
+          metadata.component,
           evidence.jvmPackage.getOrElse(""),
           evidence.generatedClass.getOrElse("")
         )

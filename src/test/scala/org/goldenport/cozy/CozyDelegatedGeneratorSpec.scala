@@ -8,7 +8,7 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug.  7, 2026
+ * @version Aug.  8, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -20,6 +20,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         "  namespace: org.alpha.textus",
         "  id: Shared",
         "  component:",
+        "    displayName: Shared Presentation",
         "    version: 0.6.0-SNAPSHOT"
       ))
 
@@ -30,6 +31,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
       settings shouldBe Map(
         "component.namespace" -> "org.alpha.textus",
         "component.id" -> "Shared",
+        "component.display-name" -> "Shared Presentation",
         "component.version" -> "0.6.0-SNAPSHOT"
       )
       settings should not contain key("component.module")
