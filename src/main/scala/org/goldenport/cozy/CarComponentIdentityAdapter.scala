@@ -1,3 +1,8 @@
+/*
+ * @since   Aug.  7, 2026
+ * @version Aug. 11, 2026
+ * @author  ASAMI, Tomoharu
+ */
 package org.goldenport.cozy
 
 import org.goldenport.cncf.component.identity.{
@@ -14,7 +19,7 @@ import scala.collection.JavaConverters._
 private[cozy] final case class CarComponentReleaseProjection(
   identity: ComponentIdentityProjection,
   coordinate: ComponentReleaseCoordinate,
-  scalamavencoordinate: String
+  scalaMavenCoordinate: String
 ) {
   def _release: String = coordinate.release()
   def _dependency_key: String = coordinate.dependencyKey()
@@ -23,8 +28,8 @@ private[cozy] final case class CarComponentReleaseProjection(
   def _car_filename: String = coordinate.carFilename()
   def _car_repository_relative_path: String = coordinate.carRepositoryRelativePath()
   def _car_cache_relative_path: String = coordinate.carCacheRelativePath()
-  def carfilename: String = _car_filename
-  def mavencoordinate: String = scalamavencoordinate
+  def carFilename: String = _car_filename
+  def mavenCoordinate: String = scalaMavenCoordinate
 }
 
 private[cozy] object CarComponentIdentityAdapter {

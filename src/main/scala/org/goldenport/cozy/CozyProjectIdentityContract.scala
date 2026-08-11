@@ -2,7 +2,7 @@ package org.goldenport.cozy
 
 /*
  * @since   Aug.  7, 2026
- * @version Aug.  7, 2026
+ * @version Aug. 11, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectIdentityEvidence(
@@ -96,8 +96,8 @@ object CozyProjectIdentityContract {
           "jvmPackage" -> value.identity.jvmPackage(),
           "generatedClass" -> value.identity.generatedClassName(),
           "path" -> value.identity.pathSegment(),
-          "carFilename" -> value.carfilename,
-          "mavenCoordinate" -> value.mavencoordinate
+          "carFilename" -> value.carFilename,
+          "mavenCoordinate" -> value.mavenCoordinate
         )
       }.getOrElse(Map.empty)
       val disagreements = _compatibility_paths.collect {

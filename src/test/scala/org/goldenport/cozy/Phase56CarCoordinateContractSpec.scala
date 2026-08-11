@@ -11,8 +11,7 @@ import sbt._
 
 /*
  * @since   Aug.  7, 2026
- *  version Aug.  7, 2026
- * @version Aug.  8, 2026
+ * @version Aug. 11, 2026
  * @author  ASAMI, Tomoharu
  */
 final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -111,8 +110,8 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
             "path" -> projection.identity.pathSegment(),
             "jvmPackage" -> projection.identity.jvmPackage(),
             "generatedClass" -> projection.identity.generatedClassName(),
-            "carFilename" -> projection.carfilename,
-            "mavenCoordinate" -> projection.mavencoordinate
+            "carFilename" -> projection.carFilename,
+            "mavenCoordinate" -> projection.mavenCoordinate
           )
         }
 
@@ -273,13 +272,13 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
             "HTTPGateway",
             "3",
             _version
-          ).map(_.carfilename),
+          ).map(_.carFilename),
           CarComponentIdentityAdapter.projectRelease(
             "org.other.textus",
             "HTTPGateway",
             "3",
             _version
-          ).map(_.carfilename)
+          ).map(_.carFilename)
         )
 
         Then("the shared ABI rejects scoped collisions and preserves two qualified identities")
