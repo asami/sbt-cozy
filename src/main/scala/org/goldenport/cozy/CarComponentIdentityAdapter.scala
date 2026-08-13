@@ -1,6 +1,6 @@
 /*
  * @since   Aug.  7, 2026
- * @version Aug. 11, 2026
+ * @version Aug. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.goldenport.cozy
@@ -33,8 +33,6 @@ private[cozy] final case class CarComponentReleaseProjection(
 }
 
 private[cozy] object CarComponentIdentityAdapter {
-  private val _namespace_required = "component.identity.namespace.required"
-
   def project(
     namespace: String,
     localId: String
@@ -57,13 +55,8 @@ private[cozy] object CarComponentIdentityAdapter {
     }
 
   def _require_release(dependency: CarDependency): CarComponentReleaseProjection =
-    dependency.namespace match {
-      case Some(namespace) =>
-        projectRelease(namespace, dependency.localId, "3", dependency.version).
-          fold(error => sys.error(s"[sbt-cozy] ${error.code()}"), identity)
-      case None =>
-        sys.error(s"[sbt-cozy] ${_namespace_required}")
-    }
+    projectRelease(dependency.namespace, dependency.localId, "3", dependency.version).
+      fold(error => sys.error(s"[sbt-cozy] ${error.code()}"), identity)
 
   def validateNoScopedCollisions(
     identities: Vector[(String, String)]

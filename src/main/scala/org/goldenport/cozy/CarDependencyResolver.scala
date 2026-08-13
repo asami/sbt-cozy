@@ -9,17 +9,14 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug.  7, 2026
+ * @version Aug. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CarDependency private (
-  val namespace: Option[String],
+  val namespace: String,
   val localId: String,
   val version: String
 ) {
-  // Source compatibility only. Namespace-sensitive operations must use localId.
-  def name: String = localId
-
   override def equals(other: Any): Boolean = other match {
     case that: CarDependency =>
       namespace == that.namespace && localId == that.localId && version == that.version
@@ -35,10 +32,7 @@ final class CarDependency private (
 
 object CarDependency {
   def apply(namespace: String, localId: String, version: String): CarDependency =
-    new CarDependency(Option(namespace), localId, version)
-
-  def apply(name: String, version: String): CarDependency =
-    new CarDependency(None, name, version)
+    new CarDependency(namespace, localId, version)
 }
 
 private[cozy] object CarDependencyResolver {

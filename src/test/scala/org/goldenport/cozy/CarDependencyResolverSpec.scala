@@ -13,7 +13,7 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug.  7, 2026
+ * @version Aug. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -22,8 +22,8 @@ final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with Giv
   private val _path = "org/alpha/textus/textus-shared/0.6.0/textus-shared-0.6.0.car"
 
   "CAR dependency resolver" should {
-    "admit local and legacy dependencies" which {
-      "resolve canonical plain-local and file repositories in configured order" in {
+    "admit canonical dependencies" which {
+      "resolve canonical local and file repositories in configured order" in {
         Given("a local first repository and an observable HTTP later candidate")
         _with_temp_dir("sbt-cozy-car-resolver") { directory =>
           val first = _write(directory / "first" / _path, "first")
@@ -61,9 +61,8 @@ final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with Giv
         }
       }
 
-      "retain the legacy named source constructor and reject unresolved namespaces before repository access" in {
-        Given("a two-argument source-compatible dependency and raw invalid namespace values")
-        val legacy = CarDependency(name = "Shared", version = "0.6.0")
+      "reject invalid canonical namespaces before repository access" in {
+        Given("canonical dependencies with raw invalid namespace values")
         val invalid = Vector(
           CarDependency(" org.alpha.textus ", "Shared", "0.6.0") -> "component.identity.namespace.segment-format",
           CarDependency("", "Shared", "0.6.0") -> "component.identity.namespace.segment-count",
@@ -71,9 +70,6 @@ final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with Giv
         )
 
         When("repository resolution is requested with a repository value invalid for I/O")
-        val legacyerror = intercept[RuntimeException] {
-          CarDependencyResolver.resolve(legacy, Seq(null), file("target/sbt-cozy-test/work/car-dependency-resolver/legacy-cache"))
-        }
         val errors = invalid.map { case (dependency, code) =>
           val error = intercept[RuntimeException] {
             CarDependencyResolver.resolve(dependency, Seq(null), file("target/sbt-cozy-test/work/car-dependency-resolver/invalid-namespace-cache"))
@@ -82,30 +78,28 @@ final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with Giv
         }
 
         Then("raw namespace admission returns exact shared codes before repository access")
-        legacyerror.getMessage shouldBe "[sbt-cozy] component.identity.namespace.required"
         errors.foreach { case (code, message) =>
           message shouldBe s"[sbt-cozy] ${code}"
         }
       }
     }
 
-    "retain deterministic structural values" which {
-      "retain structural values without reintroducing Product2 compatibility" in {
-        Given("equal and namespace-distinct canonical dependencies plus a legacy value")
+    "preserve deterministic structural values" which {
+      "preserve namespace-aware structural values without Product compatibility" in {
+        Given("equal and namespace-distinct canonical dependencies")
         val first = CarDependency("org.alpha.textus", "Shared", "0.6.0")
         val equal = CarDependency("org.alpha.textus", "Shared", "0.6.0")
         val othernamespace = CarDependency("org.beta.textus", "Shared", "0.6.0")
-        val legacy = CarDependency("Shared", "0.6.0")
 
         When("their structural value behavior is observed")
         val rendered = first.toString
 
-        Then("namespace state, local ID, and version determine equality and rendering")
+        Then("namespace, local ID, and version determine equality and rendering")
+        first.namespace shouldBe "org.alpha.textus"
         first shouldBe equal
         first.hashCode shouldBe equal.hashCode
         first should not be othernamespace
-        first should not be legacy
-        rendered should include("Some(org.alpha.textus)")
+        rendered should include("namespace=org.alpha.textus")
         rendered should include("localId=Shared")
         rendered should include("version=0.6.0")
       }

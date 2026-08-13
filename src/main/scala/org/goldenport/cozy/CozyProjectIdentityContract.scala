@@ -2,7 +2,7 @@ package org.goldenport.cozy
 
 /*
  * @since   Aug.  7, 2026
- * @version Aug. 11, 2026
+ * @version Aug. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectIdentityEvidence(
@@ -132,7 +132,7 @@ object CozyProjectIdentityContract {
 
   def admit(config: CozyProjectConfig, scalaBinaryVersion: String): Either[String, CozyProjectIdentityEvidence] = {
     val evidence = inspect(config, scalaBinaryVersion)
-    if (evidence.shape == "legacy") Right(evidence)
+    if (evidence.shape == "legacy") Left("component.identity.namespace.required")
     else if (evidence.shape != "canonical" || evidence.diagnosticCodes.nonEmpty)
       Left((evidence.diagnosticCodes ++ evidence.disagreements).mkString("; "))
     else Right(evidence)

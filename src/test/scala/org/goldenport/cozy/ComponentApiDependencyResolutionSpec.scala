@@ -6,7 +6,7 @@ import org.scalatest.wordspec.AnyWordSpec
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug.  7, 2026
+ * @version Aug. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentApiDependencyResolutionSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -47,21 +47,6 @@ final class ComponentApiDependencyResolutionSpec extends AnyWordSpec with Matche
         "--dependency",
         s"org.example.component\tProvider\t0.1.0\t${archive.toPath.normalize}"
       )
-    }
-
-    "reject a legacy bridge dependency without emitting a three-field payload" in {
-      Given("a retained two-argument dependency construction")
-      val legacy = CarDependency("Provider", "0.1.0")
-
-      When("the bridge payload is requested")
-      val error = intercept[RuntimeException] {
-        CozySbtBridge._component_api_dependency_arguments(
-          Seq(legacy -> new java.io.File("target/sbt-cozy-test/work/component-api-dependency/legacy-provider.car").getAbsoluteFile)
-        )
-      }
-
-      Then("the namespace diagnostic is returned before payload construction")
-      error.getMessage shouldBe "[sbt-cozy] component.identity.namespace.required"
     }
   }
 }

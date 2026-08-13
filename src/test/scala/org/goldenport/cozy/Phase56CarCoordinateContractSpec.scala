@@ -11,7 +11,7 @@ import sbt._
 
 /*
  * @since   Aug.  7, 2026
- * @version Aug. 11, 2026
+ * @version Aug. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -191,24 +191,6 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
           _jvm_package,
           _generated_class
         )
-      }
-    }
-
-    "E9 retain two-argument construction while rejecting namespace-free resolution" must _e9 {
-      "when a legacy dependency is submitted to the resolver" in {
-        Given(
-          "the exact E9 rules CID01-R4, CID01-R5, CID01-R6 and example shared:0.6.0-SNAPSHOT from /Users/asami/src/dev2025/cloud-native-component-framework/docs/notes/phase-56-cid01-component-identity-inventory-and-failing-first-contract.md"
-        )
-        val legacy = CarDependency("Shared", _version)
-
-        When("the retained construction reaches a namespace-sensitive authority")
-        val error = intercept[RuntimeException] {
-          CarDependencyResolver.resolve(legacy, Seq.empty, file("target/sbt-cozy-test/work/phase56-car-coordinate/legacy-cache"))
-        }
-
-        Then("construction compatibility remains while resolution rejects before lookup")
-        legacy.localId shouldBe "Shared"
-        error.getMessage shouldBe "[sbt-cozy] component.identity.namespace.required"
       }
     }
 
@@ -397,7 +379,7 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
       }
     }
 
-    "CID-03C admit authored canonical metadata through one evidence contract" must _e10_cid03c {
+    "CID-03C admit authored canonical metadata and reject legacy shapes through one evidence contract" must _e10_cid03c {
       "when complete, partial, blank, null, invalid, and legacy project metadata are inspected" in {
         Given("Spec: /Users/asami/src/dev2025/cloud-native-component-framework/docs/notes/phase-56-cid01-component-identity-inventory-and-failing-first-contract.md; Rules: CID01-R7,CID01-R8,CID01-R9; Example: E10; authored project.yaml canonical and legacy metadata")
         val canonical = CozyProjectConfig.parse(Seq(
@@ -614,7 +596,7 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
         legacyversionsevidence.map(_.effectiveVersion) shouldBe Vector("", "")
         legacyversionsevidence.map(_.canonicalNamespace) shouldBe Vector(None, None)
         legacyversionsevidence.map(_.expectedDerivedValues) shouldBe Vector(Map.empty, Map.empty)
-        legacyversionsadmission shouldBe legacyversionsevidence.map(Right(_))
+        legacyversionsadmission shouldBe Vector.fill(2)(Left("component.identity.namespace.required"))
         invalidnamespaceevidence.diagnosticCodes shouldBe Vector("component.identity.namespace.segment-format")
         invalidlocalidevidence.diagnosticCodes shouldBe Vector("component.identity.local-id.format")
 
@@ -627,13 +609,14 @@ final class Phase56CarCoordinateContractSpec extends AnyWordSpec with Matchers w
         allconflictsevidence.manifestMetadata shouldBe expectedmanifestmetadata
         allconflictsdescriptor shouldBe None
 
-        And("legacy evidence retains authored values and version without inventing a canonical namespace")
+        And("legacy evidence retains authored values and version while strict admission requires a canonical namespace")
         legacyevidence.shape shouldBe "legacy"
         legacyevidence.effectiveVersion shouldBe _version
         legacyevidence.canonicalNamespace shouldBe None
         legacyevidence.expectedDerivedValues shouldBe Map.empty
         legacyevidence.authoredCompatibilityValues should contain ("project.name" -> "legacy-component")
         legacyevidence.diagnosticCodes shouldBe Vector.empty
+        CozyProjectIdentityContract.admit(legacy, "3") shouldBe Left("component.identity.namespace.required")
       }
     }
   }
