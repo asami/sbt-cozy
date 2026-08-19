@@ -1,1 +1,8 @@
-{"name":"development-runtime-evidence","version":"0.1.0-SNAPSHOT","component":"development-runtime-evidence"}
+{
+  "schemaVersion": 3,
+  "component": {
+    "namespace": "org.example.fixture",
+    "id": "DevelopmentRuntimeEvidence",
+    "version": "0.1.0-SNAPSHOT"
+  }
+}

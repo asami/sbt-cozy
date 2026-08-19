@@ -1,1 +1,24 @@
-{"format":"cozy.car.abi-manifest.v1","car":{"name":"development-runtime-evidence","version":"0.1.0-SNAPSHOT"},"abi":{"exports":{"components":[{"name":"development-runtime-evidence"}]}}}
+{
+  "format": "cozy.car.abi-manifest.v2",
+  "component": {
+    "namespace": "org.example.fixture",
+    "id": "DevelopmentRuntimeEvidence",
+    "version": "0.1.0-SNAPSHOT"
+  },
+  "abi": {
+    "version": 1,
+    "exports": {
+      "components": [
+        {
+          "namespace": "org.example.fixture",
+          "id": "DevelopmentRuntimeEvidence"
+        }
+      ],
+      "services": [],
+      "operations": [],
+      "types": [],
+      "entities": []
+    },
+    "dependencies": []
+  }
+}

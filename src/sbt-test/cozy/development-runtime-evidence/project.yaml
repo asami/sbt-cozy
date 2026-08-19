@@ -1,8 +1,9 @@
 project:
-  name: development-runtime-evidence
+  namespace: org.example.fixture
+  id: DevelopmentRuntimeEvidence
   kind: car
+  name: fixture-development-runtime-evidence
   component:
-    name: development-runtime-evidence
     version: "0.1.0-SNAPSHOT"
 build:
   cozyVersion: "0.3.1-SNAPSHOT"

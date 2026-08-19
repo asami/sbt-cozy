@@ -450,10 +450,14 @@ object CozyPlugin extends AutoPlugin {
       packaging == "car" || packaging == "sar"
     },
     cozyCarName := {
-      CarPublicationCoordinate._component_release(
-        cozyProjectMetadata.value,
-        scalaBinaryVersion.value
-      )._car_filename.stripSuffix(".car")
+      val packaging = cozyPackaging.value.trim.toLowerCase(java.util.Locale.ROOT)
+      if (packaging == "car" || packaging == "sar")
+        CarPublicationCoordinate._component_release(
+          cozyProjectMetadata.value,
+          scalaBinaryVersion.value
+        )._car_filename.stripSuffix(".car")
+      else
+        s"${moduleName.value}-${version.value}"
     },
     cozySarName := s"${moduleName.value}-${version.value}",
     cozySpiJars := Seq.empty,

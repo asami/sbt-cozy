@@ -67,11 +67,11 @@ lazy val root = (project in file("."))
       val cardir = baseDirectory.value / "src" / "main" / "car"
       IO.write(
         cardir / "component-descriptor.json",
-        """{"name":"development-runtime-evidence","version":"0.1.0-SNAPSHOT","component":"development-runtime-evidence","config":{"evidenceRevision":"2"}}"""
+        """{"schemaVersion":3,"component":{"namespace":"org.example.fixture","id":"DevelopmentRuntimeEvidence","version":"0.1.0-SNAPSHOT"},"config":{"evidenceRevision":"2"}}"""
       )
       IO.write(
         cardir / "abi-manifest.json",
-        """{"format":"cozy.car.abi-manifest.v1","car":{"name":"development-runtime-evidence","version":"0.1.0-SNAPSHOT"},"abi":{"exports":{"components":[{"name":"development-runtime-evidence"}]}}}"""
+        """{"format":"cozy.car.abi-manifest.v2","component":{"namespace":"org.example.fixture","id":"DevelopmentRuntimeEvidence","version":"0.1.0-SNAPSHOT"},"abi":{"version":1,"exports":{"components":[{"namespace":"org.example.fixture","id":"DevelopmentRuntimeEvidence"}],"services":[],"operations":[],"types":[],"entities":[]},"dependencies":[]}}"""
       )
     },
     verifyRegeneratedRuntimeEvidence := {

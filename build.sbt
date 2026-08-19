@@ -2,12 +2,13 @@ import sbt.ScriptedPlugin
 import sbt.ScriptedPlugin.autoImport._
 
 ThisBuild / organization := "org.goldenport"
-ThisBuild / version := "0.1.20-SNAPSHOT"
+ThisBuild / version := "0.1.16"
 ThisBuild / description := "sbt plugin for cozy/CML Scala source generation and CAR/SAR packaging"
 
 ThisBuild / publishArtifact := true
 ThisBuild / publishMavenStyle := true
 ThisBuild / pomIncludeRepository := { _ => false }
+ThisBuild / resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/repository/maven"
 
 commands += Command.command("publishLocal") { state =>
   val extracted = Project.extract(state)
@@ -43,7 +44,7 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-core" % "0.14.13",
       "io.circe" %% "circe-parser" % "0.14.13",
-      "org.goldenport" % "cncf-collaborator-api" % "0.2.0-SNAPSHOT",
+      "org.goldenport" % "cncf-collaborator-api" % "0.2.0",
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,
       "org.scalacheck" %% "scalacheck" % "1.19.0" % Test
     ),
