@@ -668,6 +668,44 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         }
       }
 
+      "retain the selected Coursier runtime for publish-car bridge requests" in {
+        Given("a selected project-owned Coursier runtime and a CAR publication request")
+        _with_temp_dir("sbt-cozy-publish-car-runtime-delegate") { dir =>
+          val metadata = CozyProjectConfig.parse(Seq(
+            "project:",
+            "  kind: car",
+            "build:",
+            "  cozyVersion: 0.3.1-SNAPSHOT"
+          ))
+          val command = CozyGenerationVersionContract.delegateCommand(
+            metadata,
+            None,
+            Seq.empty
+          )
+          val archive = _write(dir / "target" / "example.car", "car")
+
+          When("the publish-car bridge command is resolved")
+          val (_, resolved) = CozySbtBridge.resolveForTest(
+            basedir = dir,
+            delegateprojectdir = None,
+            delegatecommand = command,
+            action = "publish-car",
+            arguments = Vector(
+              dir.getAbsolutePath,
+              "--warehouse", (dir / "warehouse").getAbsolutePath,
+              "--name", "Example",
+              "--version", "0.1.0",
+              "--car", archive.getAbsolutePath
+            )
+          )
+
+          Then("the publication bridge retains the selected runtime command")
+          resolved.take(command.size) shouldBe command
+          resolved should contain inOrder ("--runtime", "0.3.1-SNAPSHOT", "sbt-bridge")
+          IO.read(file(resolved.last)) should include("\"action\": \"publish-car\"")
+        }
+      }
+
       "delegate publish-project requests through the bridge" in {
         Given("a project publication request")
         _with_temp_dir("sbt-cozy-publish-project-delegate") { dir =>
