@@ -117,6 +117,64 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         )
       }
 
+      "resolve CAR and SAR release and snapshot versions to Coursier delegates" in {
+        Given("CAR release and SAR snapshot metadata with project-owned Cozy versions")
+        val carmetadata = CozyProjectConfig.parse(Seq(
+          "project:",
+          "  kind: car",
+          "build:",
+          "  cozyVersion: 0.3.1"
+        ))
+        val sarmetadata = CozyProjectConfig.parse(Seq(
+          "project:",
+          "  kind: sar",
+          "build:",
+          "  cozyVersion: 0.3.2-SNAPSHOT"
+        ))
+
+        When("sbt-cozy selects their delegated generation commands")
+        val carcommand = CozyGenerationVersionContract.delegateCommand(
+          carmetadata,
+          None,
+          Seq.empty
+        )
+        val sarcommand = CozyGenerationVersionContract.delegateCommand(
+          sarmetadata,
+          None,
+          Seq.empty
+        )
+
+        Then("each archive project launches the matching project-owned Cozy runtime")
+        carcommand shouldBe CozySbtBridge.coursierCommand("0.3.1")
+        carcommand should contain inOrder ("--runtime", "0.3.1")
+        sarcommand shouldBe CozySbtBridge.coursierCommand("0.3.2-SNAPSHOT")
+        sarcommand should contain inOrder ("--runtime", "0.3.2-SNAPSHOT")
+      }
+
+      "reject project-local delegate commands for CAR and SAR projects" in {
+        Given("archive project metadata and a local .cozy delegate command")
+        val metadata = CozyProjectConfig.parse(Seq(
+          "project:",
+          "  kind: car",
+          "build:",
+          "  cozyVersion: 0.3.1-SNAPSHOT"
+        ))
+
+        When("sbt-cozy resolves the delegated generation command")
+        val error = intercept[RuntimeException] {
+          CozyGenerationVersionContract.delegateCommand(
+            metadata,
+            None,
+            Seq("cozy", "--runtime", "0.3.0")
+          )
+        }
+
+        Then("the project-local command is rejected before delegated execution")
+        error.getMessage should include(
+          "CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.command"
+        )
+      }
+
       "retain explicit delegate configuration for non-CAR library projects" in {
         Given("a Maven library project without CAR generation metadata")
         val metadata = CozyProjectConfig.parse(Seq(
@@ -126,16 +184,17 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           "  kind: maven"
         ))
 
-        When("the non-CAR project resolves optional generation settings")
+        When("the non-CAR project resolves optional generation settings and an explicit command")
         val versions = CozyGenerationVersionContract.projectVersions(metadata)
-        val delegate = CozyGenerationVersionContract.delegateVersion(
+        val delegate = CozyGenerationVersionContract.delegateCommand(
           metadata,
-          Some("0.3.1-SNAPSHOT")
+          Some("0.3.1-SNAPSHOT"),
+          Seq("custom-cozy", "generate")
         )
 
-        Then("the CAR authority requirement does not change library behavior")
+        Then("the CAR authority requirement does not change the explicit library command")
         versions shouldBe empty
-        delegate shouldBe Some("0.3.1-SNAPSHOT")
+        delegate shouldBe Seq("custom-cozy", "generate")
       }
 
       "reject contradictory project and owning-build bridge versions" in {

@@ -174,6 +174,28 @@ private[cozy] object CozyGenerationVersionContract {
     }
   }
 
+  def delegateCommand(
+    projectMetadata: CozyProjectConfig,
+    configuredVersion: Option[String],
+    configuredCommand: Seq[String]
+  ): Seq[String] = {
+    val command = configuredCommand.map(_.trim).filter(_.nonEmpty)
+    val version = delegateVersion(projectMetadata, configuredVersion)
+    if (_requires_exact_versions(projectMetadata)) {
+      if (command.nonEmpty)
+        sys.error(
+          "[sbt-cozy] CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.command."
+        )
+      CozySbtBridge.coursierCommand(version.getOrElse(
+        sys.error("[sbt-cozy] CAR/SAR delegated generation requires project.yaml build.cozyVersion.")
+      ))
+    } else {
+      command.headOption.map(_ => command).getOrElse(
+        version.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy"))
+      )
+    }
+  }
+
   private def _requires_exact_versions(
     projectmetadata: CozyProjectConfig
   ): Boolean = {
@@ -436,10 +458,11 @@ object CozyPlugin extends AutoPlugin {
         value("generation.delegate.coursier_version").
         orElse(sys.env.get("SBT_COZY_COURSIER_VERSION"))
     ),
-    cozyDelegateCommand := {
-      val command = cozyProjectConfig.value.list("generation.delegate.command")
-      if (command.nonEmpty) command else cozyDelegateCoursierVersion.value.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy"))
-    },
+    cozyDelegateCommand := CozyGenerationVersionContract.delegateCommand(
+      cozyProjectMetadata.value,
+      cozyDelegateCoursierVersion.value,
+      cozyProjectConfig.value.list("generation.delegate.command")
+    ),
     cozyGenerationVersionOverrides := Map.empty,
     cozySkipUnchangedGeneration := cozyProjectConfig.value.boolean("generation.skip_unchanged").getOrElse(true),
     cozyWebDescriptorSync := cozyProjectConfig.value.boolean("generation.web_descriptor_sync").getOrElse(true),
