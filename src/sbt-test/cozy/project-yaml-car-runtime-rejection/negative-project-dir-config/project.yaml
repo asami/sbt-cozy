@@ -1,0 +1,11 @@
+project:
+  namespace: org.example.fixture
+  id: ProjectYamlCarRuntimeRejectionConfiguredProjectDir
+  kind: car
+  name: fixture-project-yaml-car-runtime-rejection-configured-project-dir
+  component:
+    version: "0.1.0"
+build:
+  cozyVersion: "0.3.1-SNAPSHOT"
+packaging:
+  kind: car

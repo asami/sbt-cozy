@@ -1,0 +1,3 @@
+generation:
+  delegate:
+    project_dir: "/private/tmp/cozy-local-project"

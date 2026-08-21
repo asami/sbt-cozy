@@ -8,7 +8,8 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug.  8, 2026
+ *  version Aug.  8, 2026
+ * @version Aug. 21, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -173,6 +174,54 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         error.getMessage should include(
           "CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.command"
         )
+      }
+
+      "reject CAR project-directory overrides while retaining non-CAR precedence" in {
+        Given("CAR metadata, local configured and ambient project directories, and non-CAR metadata")
+        val carmetadata = CozyProjectConfig.parse(Seq(
+          "project:",
+          "  kind: car",
+          "build:",
+          "  cozyVersion: 0.3.1-SNAPSHOT"
+        ))
+        val librarymetadata = CozyProjectConfig.parse(Seq(
+          "project:",
+          "  kind: library",
+          "packaging:",
+          "  kind: maven"
+        ))
+        val configured = file("target/sbt-cozy-test/work/cozy-delegate-project-dir/configured")
+        val ambient = file("target/sbt-cozy-test/work/cozy-delegate-project-dir/ambient")
+
+        When("sbt-cozy resolves configured, ambient, and non-CAR directory settings")
+        val configurederror = intercept[RuntimeException] {
+          CozyGenerationVersionContract.delegateProjectDir(
+            carmetadata,
+            Some(configured),
+            None
+          )
+        }
+        val ambienterror = intercept[RuntimeException] {
+          CozyGenerationVersionContract.delegateProjectDir(
+            carmetadata,
+            None,
+            Some(ambient)
+          )
+        }
+        val noncar = CozyGenerationVersionContract.delegateProjectDir(
+          librarymetadata,
+          Some(configured),
+          Some(ambient)
+        )
+
+        Then("CAR runtime authority rejects both local sources while library precedence remains configured")
+        configurederror.getMessage should include(
+          "CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.project_dir"
+        )
+        ambienterror.getMessage should include(
+          "CAR/SAR delegated generation does not permit ambient SBT_COZY_PROJECT_DIR"
+        )
+        noncar shouldBe Some(configured)
       }
 
       "retain explicit delegate configuration for non-CAR library projects" in {

@@ -20,7 +20,8 @@ import scala.sys.process._
  *  version Apr. 25, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Aug.  8, 2026
+ *  version Aug.  8, 2026
+ * @version Aug. 21, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -194,6 +195,24 @@ private[cozy] object CozyGenerationVersionContract {
         version.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy"))
       )
     }
+  }
+
+  def delegateProjectDir(
+    projectMetadata: CozyProjectConfig,
+    configuredProjectDir: Option[File],
+    environmentProjectDir: Option[File]
+  ): Option[File] = {
+    if (_requires_exact_versions(projectMetadata)) {
+      if (configuredProjectDir.nonEmpty)
+        sys.error(
+          "[sbt-cozy] CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.project_dir."
+        )
+      if (environmentProjectDir.nonEmpty)
+        sys.error(
+          "[sbt-cozy] CAR/SAR delegated generation does not permit ambient SBT_COZY_PROJECT_DIR."
+        )
+    }
+    configuredProjectDir.orElse(environmentProjectDir)
   }
 
   private def _requires_exact_versions(
@@ -451,7 +470,11 @@ object CozyPlugin extends AutoPlugin {
     cozySourceDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("generation.source_dir")).getOrElse((Compile / sourceDirectory).value / "cozy"),
     cozyTargetDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("generation.target_dir")).getOrElse((Compile / sourceManaged).value),
     cozyGeneratorBackend := cozyProjectConfig.value.value("generation.backend").orElse(sys.env.get("SBT_COZY_GENERATOR_BACKEND")).getOrElse("cozy"),
-    cozyDelegateProjectDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("generation.delegate.project_dir")).orElse(sys.env.get("SBT_COZY_PROJECT_DIR").map(file)),
+    cozyDelegateProjectDir := CozyGenerationVersionContract.delegateProjectDir(
+      cozyProjectMetadata.value,
+      _config_file(baseDirectory.value, cozyProjectConfig.value.value("generation.delegate.project_dir")),
+      sys.env.get("SBT_COZY_PROJECT_DIR").map(file)
+    ),
     cozyDelegateCoursierVersion := CozyGenerationVersionContract.delegateVersion(
       cozyProjectMetadata.value,
       cozyProjectConfig.value.
