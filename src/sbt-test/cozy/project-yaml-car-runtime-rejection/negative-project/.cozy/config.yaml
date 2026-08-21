@@ -1,0 +1,6 @@
+generation:
+  delegate:
+    command:
+      - cozy
+      - --runtime
+      - "0.3.0"

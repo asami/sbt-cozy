@@ -1,0 +1,3 @@
+> writePluginVersion
+-$ exec sh run-negative-publish.sh
+$ absent negative-project/target/isolated-warehouse
