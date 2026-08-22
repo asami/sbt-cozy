@@ -9,7 +9,7 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug. 13, 2026
+ * @version Aug. 22, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CarDependency private (
@@ -70,7 +70,41 @@ private[cozy] object CarDependencyResolver {
     } else {
       val root = if (normalized.startsWith("file:")) new java.io.File(new URI(normalized)) else file(normalized)
       val candidate = root / coordinate._car_repository_relative_path
-      Option(candidate).filter(_.isFile)
+      if (candidate.isFile) {
+        if (_is_snapshot(coordinate._release))
+          _cache_local_snapshot(candidate, coordinate, cachedir)
+        else
+          Some(candidate)
+      } else {
+        None
+      }
+    }
+  }
+
+  private def _cache_local_snapshot(
+    source: File,
+    coordinate: CarComponentReleaseProjection,
+    cachedir: File
+  ): Option[File] = {
+    val destination = cachedir / coordinate._car_cache_relative_path
+    if (destination.isFile) {
+      Some(destination)
+    } else {
+      var temporary: Option[Path] = None
+      try {
+        val canonical = source.getCanonicalFile
+        IO.createDirectory(destination.getParentFile)
+        val path = Files.createTempFile(destination.getParentFile.toPath, s"${coordinate._car_filename}.", ".tmp")
+        temporary = Some(path)
+        Files.copy(canonical.toPath, path, StandardCopyOption.REPLACE_EXISTING)
+        Files.move(path, destination.toPath, StandardCopyOption.REPLACE_EXISTING)
+        temporary = None
+        Some(destination)
+      } catch {
+        case NonFatal(_) => None
+      } finally {
+        temporary.foreach(path => Files.deleteIfExists(path))
+      }
     }
   }
 

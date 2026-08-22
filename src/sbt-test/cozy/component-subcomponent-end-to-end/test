@@ -1,0 +1,7 @@
+> clean
+> publisherProbe/run
+> rsc09ResolveOnline
+> rsc09DeleteRepository
+> rsc09ResolveOffline
+> set resolverOnline / cozyCarDependencies := Seq(CarDependency("org.goldenport.cncf.phase58", "RscParent", "0.1.0-SNAPSHOT"))
+> rsc09ResolveProductionPrimaryOnly

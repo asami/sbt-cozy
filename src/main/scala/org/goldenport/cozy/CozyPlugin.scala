@@ -513,12 +513,17 @@ object CozyPlugin extends AutoPlugin {
       if (configured.nonEmpty) configured
       else {
         val home = file(sys.props.getOrElse("user.home", "."))
-        Seq(
+        val configuredwarehouse = cozyProjectConfig.value.value("warehouse.repository").toSeq.flatMap { repository =>
+          _config_file(baseDirectory.value, Some(repository)).map { warehouse =>
+            (warehouse / "repository" / "car").getCanonicalFile.getAbsolutePath
+          }
+        }
+        (configuredwarehouse ++ Seq(
           (cozyLocalWarehouseDir.value / "repository" / "car").getAbsolutePath,
           (home / ".cncf" / "repository" / "car").getAbsolutePath,
           (home / ".cncf" / "cache" / "car").getAbsolutePath,
           "https://www.simplemodeling.org/repository/car"
-        ).distinct
+        )).distinct
       }
     },
     cozySarExtensionJars := Seq.empty,

@@ -13,13 +13,14 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug. 13, 2026
+ * @version Aug. 22, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with GivenWhenThen {
   private val _namespace = "org.alpha.textus"
   private val _dependency = CarDependency(_namespace, "Shared", "0.6.0")
   private val _path = "org/alpha/textus/textus-shared/0.6.0/textus-shared-0.6.0.car"
+  private val _snapshot_path = "org/alpha/textus/textus-shared/0.6.0-SNAPSHOT/textus-shared-0.6.0-SNAPSHOT.car"
 
   "CAR dependency resolver" should {
     "admit canonical dependencies" which {
@@ -189,6 +190,58 @@ final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with Giv
     }
 
     "apply SNAPSHOT policy" which {
+      "capture local SNAPSHOT CARs into a coordinate-qualified cache for offline reuse" in {
+        Given("a local SNAPSHOT repository and an observable HTTP later candidate")
+        _with_temp_dir("sbt-cozy-car-local-snapshot") { directory =>
+          val dependency = CarDependency(_namespace, "Shared", "0.6.0-SNAPSHOT")
+          val source = _write(directory / "repository" / _snapshot_path, "local-snapshot")
+          val lateraccesses = new AtomicInteger(0)
+          val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+          server.createContext("/car", new HttpHandler {
+            override def handle(exchange: HttpExchange): Unit = {
+              lateraccesses.incrementAndGet()
+              exchange.sendResponseHeaders(500, -1)
+              exchange.close()
+            }
+          })
+          server.start()
+          val localrepository = (directory / "repository").getAbsolutePath
+          val laterrepository = s"http://127.0.0.1:${server.getAddress.getPort}/car"
+          try {
+            When("the SNAPSHOT dependency is resolved from the local repository")
+            val first = CarDependencyResolver.resolve(
+              dependency,
+              Seq(localrepository, laterrepository),
+              directory / "cache"
+            )
+            val firstbytes = Files.readAllBytes(first.toPath).toVector
+            val expectedcache = directory / "cache" / _snapshot_path
+
+            Then("the local source is captured into the coordinate-qualified cache without HTTP access")
+            first.getCanonicalFile shouldBe expectedcache.getCanonicalFile
+            first.getCanonicalFile should not be source.getCanonicalFile
+            firstbytes shouldBe "local-snapshot".getBytes("UTF-8").toVector
+            lateraccesses.get() shouldBe 0
+
+            IO.delete(directory / "repository")
+            val second = CarDependencyResolver.resolve(
+              dependency,
+              Seq(localrepository, laterrepository),
+              directory / "cache"
+            )
+
+            Then("the cached result and bytes remain available without recreating the source")
+            second.getCanonicalFile shouldBe first.getCanonicalFile
+            Files.readAllBytes(second.toPath).toVector shouldBe firstbytes
+            source.isFile shouldBe false
+            (directory / "repository").exists shouldBe false
+            lateraccesses.get() shouldBe 0
+          } finally {
+            server.stop(0)
+          }
+        }
+      }
+
       "retain remote SNAPSHOT suppression and report the canonical missing key" in {
         Given("a SNAPSHOT dependency and an empty local repository")
         _with_temp_dir("sbt-cozy-car-missing") { directory =>
