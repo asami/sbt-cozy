@@ -380,6 +380,7 @@ object CozyPlugin extends AutoPlugin {
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
+    val cozySourceArchive = taskKey[File]("Write the canonical component source archive inventory evidence.")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
     val cozyDevelopmentRuntimeManifest = taskKey[File]("Write development runtime admission evidence for a CAR project.")
     val cozyRuntimeEvidenceFiles = taskKey[Seq[File]]("Prepare the complete development runtime evidence set.")
@@ -657,6 +658,21 @@ object CozyPlugin extends AutoPlugin {
         }
         }
       }
+    },
+
+    cozySourceArchive := {
+      val output = target.value / "cozy" / "component-source-archive.json"
+      CozySbtBridge.writeComponentSourceArchive(
+        projectDir = baseDirectory.value,
+        output = output,
+        baseDir = baseDirectory.value,
+        delegateProjectDir = cozyDelegateProjectDir.value,
+        delegateCommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      if (!output.isFile)
+        sys.error(s"[sbt-cozy] component source archive was not created: ${output.getAbsolutePath}")
+      output
     },
 
     cozyComponentApiJar := {
@@ -3093,6 +3109,28 @@ private[cozy] object CozySbtBridge {
         arguments = Vector(
           "--project-dir", projectDir.getAbsolutePath,
           "--runtime-classpath-file", runtimeClasspathFile.getAbsolutePath,
+          "--save", output.getAbsolutePath
+        )
+      ),
+      baseDir,
+      delegateProjectDir,
+      delegateCommand,
+      log
+    )
+
+  def writeComponentSourceArchive(
+    projectDir: File,
+    output: File,
+    baseDir: File,
+    delegateProjectDir: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit =
+    _run(
+      _request(
+        action = "write-component-source-archive",
+        arguments = Vector(
+          "--project-dir", projectDir.getAbsolutePath,
           "--save", output.getAbsolutePath
         )
       ),

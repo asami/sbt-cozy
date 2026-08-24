@@ -1,0 +1,9 @@
+> prepareSourceArchiveFixture
+> cozySourceArchive
+> verifySourceArchiveProjection
+> rememberSourceArchive
+> clean
+> prepareSourceArchiveFixture
+> cozySourceArchive
+> verifySourceArchiveProjection
+> verifyRepeatedSourceArchiveProjection
