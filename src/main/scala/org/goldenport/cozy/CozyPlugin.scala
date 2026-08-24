@@ -2,7 +2,7 @@ package org.goldenport.cozy
 
 import java.time.Instant
 import java.nio.charset.StandardCharsets
-import java.nio.file.Files
+import java.nio.file.{Files, LinkOption}
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 import scala.collection.JavaConverters._
@@ -21,7 +21,7 @@ import scala.sys.process._
  *  version May. 26, 2026
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
- * @version Aug. 21, 2026
+ * @version Aug. 25, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -358,6 +358,207 @@ private[cozy] object CozyCncfRuntimeDescriptor {
     MessageDigest.getInstance("SHA-256").digest(bytes).map(b => f"${b & 0xff}%02x").mkString
 }
 
+private[cozy] object CozyScaladocArchive {
+  private val _schema = "cozy.component-scaladoc.v1"
+  private val _manifest_file_name = "scaladoc-manifest.json"
+  private val _sha256_pattern = "^[0-9a-f]{64}$".r
+  private val _source_link = "(?is)<a\\b[^>]*\\bhref\\s*=\\s*[\"'][^\"']+[\"'][^>]*>\\s*source\\s*</a>".r
+  private val _manifest_pattern = """\A\{"schema":"([^"]+)","sourceDigest":"([0-9a-f]{64})","contentDigest":"([0-9a-f]{64})","entries":\[(.*)\]\}\z""".r
+  private val _entry_pattern = """\{"path":"([^"]+)","sha256":"([0-9a-f]{64})"\}""".r
+
+  final case class Entry(path: String, sha256: String)
+  private final case class Manifest(sourceDigest: String, contentDigest: String, entries: Vector[Entry])
+
+  def exists(directory: File): Boolean =
+    Files.exists(directory.toPath, LinkOption.NOFOLLOW_LINKS)
+
+  def requirePublicOptions(options: Seq[String]): Unit = {
+    val prohibited = options.filter { option =>
+      val lower = option.trim.toLowerCase(java.util.Locale.ROOT)
+      lower == "-private" ||
+        lower.startsWith("-doc-source-url") ||
+        lower.startsWith("-source-links")
+    }
+    if (prohibited.nonEmpty)
+      sys.error(s"[sbt-cozy] cozyScaladocArchive requires public Scaladoc without source links; prohibited scalacOptions: ${prohibited.mkString(", ")}")
+  }
+
+  def stage(documentation: File, directory: File, projectroot: File): File = {
+    if (!documentation.isDirectory)
+      sys.error(s"[sbt-cozy] Compile / doc did not create a Scaladoc directory: ${documentation.getAbsolutePath}")
+    if (exists(directory))
+      sys.error(s"[sbt-cozy] Scaladoc staging already exists and must be verified, not regenerated: ${directory.getAbsolutePath}")
+    Files.createDirectories(directory.toPath)
+    val root = documentation.toPath.toAbsolutePath.normalize()
+    val staged = directory.toPath.toAbsolutePath.normalize()
+    val stream = Files.walk(root)
+    try {
+      stream.iterator().asScala.toVector.foreach { source =>
+        if (source != root && Files.isSymbolicLink(source))
+          sys.error(s"[sbt-cozy] Scaladoc generation produced a symbolic link: $source")
+        else if (Files.isRegularFile(source)) {
+          val relative = root.relativize(source).toString.replace('\\', '/')
+          if (!_is_source_page(relative)) {
+            val destination = staged.resolve(relative)
+            Option(destination.getParent).foreach(Files.createDirectories(_))
+            Files.copy(source, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+          }
+        }
+      }
+    } finally {
+      stream.close()
+    }
+    val entries = _actual_entries(staged)
+    val manifest = Manifest(sourceDigest(projectroot), _inventory_digest(entries), entries)
+    Files.write(
+      staged.resolve(_manifest_file_name),
+      _render(manifest).getBytes(StandardCharsets.UTF_8)
+    )
+    verify(directory, projectroot)
+    directory
+  }
+
+  def verify(directory: File, projectroot: File): File = {
+    val staged = directory.toPath.toAbsolutePath.normalize()
+    _require_directory(staged, "Scaladoc staging directory")
+    val manifestpath = staged.resolve(_manifest_file_name)
+    _require_regular_file(manifestpath, "Scaladoc manifest")
+    val manifest = _parse_manifest(new String(Files.readAllBytes(manifestpath), StandardCharsets.UTF_8), manifestpath)
+    if (manifest.sourceDigest != sourceDigest(projectroot))
+      sys.error(s"[sbt-cozy] Scaladoc source-input digest differs from current Scala sources: $manifestpath")
+    _require_entries(manifest.entries, staged)
+    val actual = _actual_entries(staged)
+    if (actual != manifest.entries)
+      sys.error(s"[sbt-cozy] Scaladoc staged entries differ from the manifest: ${staged.toString}")
+    if (manifest.contentDigest != _inventory_digest(manifest.entries))
+      sys.error(s"[sbt-cozy] Scaladoc staged-content digest differs from the manifest: $manifestpath")
+    if (!manifest.entries.exists(_.path == "index.html"))
+      sys.error(s"[sbt-cozy] Scaladoc staging is missing index.html: ${staged.toString}")
+    if (!manifest.entries.exists(entry => _is_search_or_symbol_evidence(entry.path)))
+      sys.error(s"[sbt-cozy] Scaladoc staging is missing generated search or symbol evidence: ${staged.toString}")
+    _require_no_source_disclosure(staged, manifest.entries)
+    directory
+  }
+
+  def sourceDigest(projectroot: File): String = {
+    val root = projectroot.toPath.toAbsolutePath.normalize()
+    val sourcedir = root.resolve("src/main/scala")
+    if (!Files.exists(sourcedir))
+      _inventory_digest(Vector.empty)
+    else {
+      _require_directory(sourcedir, "Scala source directory")
+      val stream = Files.walk(sourcedir)
+      try {
+        val entries = stream.iterator().asScala.toVector.collect {
+          case path if path != sourcedir && Files.isSymbolicLink(path) =>
+            sys.error(s"[sbt-cozy] Scala source input must not be a symbolic link: $path")
+          case path if Files.isRegularFile(path) && path.getFileName.toString.endsWith(".scala") =>
+            Entry(root.relativize(path).toString.replace('\\', '/'), _sha256(Files.readAllBytes(path)))
+        }.sortBy(_.path)
+        _inventory_digest(entries)
+      } finally {
+        stream.close()
+      }
+    }
+  }
+
+  private def _parse_manifest(text: String, path: java.nio.file.Path): Manifest =
+    text match {
+      case _manifest_pattern(schema, source, content, entries) if schema == _schema =>
+        val parsed = _entry_pattern.findAllMatchIn(entries).map(m => Entry(m.group(1), m.group(2))).toVector
+        if (parsed.map(_render_entry).mkString(",") != entries)
+          sys.error(s"[sbt-cozy] Scaladoc manifest entries are invalid or noncanonical: $path")
+        val manifest = Manifest(source, content, parsed)
+        if (_render(manifest) != text)
+          sys.error(s"[sbt-cozy] Scaladoc manifest is not canonical: $path")
+        manifest
+      case _ =>
+        sys.error(s"[sbt-cozy] Scaladoc manifest is missing canonical schema, digest, or entries: $path")
+    }
+
+  private def _require_entries(entries: Vector[Entry], directory: java.nio.file.Path): Unit = {
+    if (entries.isEmpty || entries.map(_.path) != entries.map(_.path).sorted || entries.map(_.path).distinct.size != entries.size)
+      sys.error(s"[sbt-cozy] Scaladoc manifest entries are not uniquely sorted: $directory")
+    entries.foreach { entry =>
+      if (!_is_safe_relative_path(entry.path) || entry.path == _manifest_file_name || !_is_sha256(entry.sha256))
+        sys.error(s"[sbt-cozy] Scaladoc manifest contains an unsafe staged entry: ${entry.path}")
+    }
+  }
+
+  private def _actual_entries(directory: java.nio.file.Path): Vector[Entry] = {
+    val stream = Files.walk(directory)
+    try {
+      stream.iterator().asScala.toVector.collect {
+        case path if path != directory && Files.isSymbolicLink(path) =>
+          sys.error(s"[sbt-cozy] Scaladoc staging must not contain a symbolic link: $path")
+        case path if Files.isRegularFile(path) =>
+          val relative = directory.relativize(path).toString.replace('\\', '/')
+          if (!_is_safe_relative_path(relative))
+            sys.error(s"[sbt-cozy] Scaladoc staging contains an unsafe path: $relative")
+          if (relative == _manifest_file_name) None else Some(Entry(relative, _sha256(Files.readAllBytes(path))))
+      }.flatten.sortBy(_.path)
+    } finally {
+      stream.close()
+    }
+  }
+
+  private def _require_no_source_disclosure(directory: java.nio.file.Path, entries: Vector[Entry]): Unit =
+    entries.foreach { entry =>
+      val lower = entry.path.toLowerCase(java.util.Locale.ROOT)
+      if (_is_source_page(lower))
+        sys.error(s"[sbt-cozy] Scaladoc source-page material is forbidden: ${entry.path}")
+      if (_is_text_path(lower)) {
+        val text = new String(Files.readAllBytes(directory.resolve(entry.path)), StandardCharsets.UTF_8)
+        if (text.toLowerCase(java.util.Locale.ROOT).contains("src-html") || _source_link.findFirstIn(text).nonEmpty)
+          sys.error(s"[sbt-cozy] Scaladoc source link or source-page material is forbidden: ${entry.path}")
+      }
+    }
+
+  // The manifest is canonical JSON: its exact bytes participate in the CAR package contract.
+  private def _render(manifest: Manifest): String = {
+    val entries = manifest.entries.map(_render_entry).mkString("[", ",", "]")
+    s"""{"schema":"${_schema}","sourceDigest":"${manifest.sourceDigest}","contentDigest":"${manifest.contentDigest}","entries":$entries}"""
+  }
+
+  private def _render_entry(entry: Entry): String =
+    s"""{"path":"${entry.path}","sha256":"${entry.sha256}"}"""
+
+  private def _inventory_digest(entries: Vector[Entry]): String =
+    _sha256(entries.map(entry => s"${entry.path}\t${entry.sha256}\n").mkString.getBytes(StandardCharsets.UTF_8))
+
+  private def _sha256(bytes: Array[Byte]): String =
+    MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
+
+  private def _require_directory(path: java.nio.file.Path, label: String): Unit =
+    if (Files.isSymbolicLink(path) || !Files.isDirectory(path))
+      sys.error(s"[sbt-cozy] $label is missing, unsafe, or not a directory: $path")
+
+  private def _require_regular_file(path: java.nio.file.Path, label: String): Unit =
+    if (Files.isSymbolicLink(path) || !Files.isRegularFile(path))
+      sys.error(s"[sbt-cozy] $label is missing, unsafe, or not a regular file: $path")
+
+  private def _is_safe_relative_path(path: String): Boolean =
+    path.nonEmpty &&
+      !path.startsWith("/") &&
+      !path.endsWith("/") &&
+      !path.contains('\\') &&
+      path.split('/').forall(segment => segment.nonEmpty && segment != "." && segment != "..")
+
+  private def _is_source_page(path: String): Boolean =
+    path == "src-html" || path.startsWith("src-html/")
+
+  private def _is_search_or_symbol_evidence(path: String): Boolean = {
+    val lower = path.toLowerCase(java.util.Locale.ROOT)
+    (lower.contains("search") || lower.contains("index")) &&
+      (lower.endsWith(".js") || lower.endsWith(".json"))
+  }
+
+  private def _is_text_path(path: String): Boolean =
+    Vector(".css", ".html", ".js", ".json").exists(path.endsWith)
+
+  private def _is_sha256(value: String): Boolean = _sha256_pattern.pattern.matcher(value).matches()
+}
+
 object CozyPlugin extends AutoPlugin {
   object autoImport {
     type CarDependency = org.goldenport.cozy.CarDependency
@@ -381,6 +582,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
     val cozySourceArchive = taskKey[File]("Write the canonical component source archive inventory evidence.")
+    val cozyScaladocArchive = taskKey[File]("Generate or strictly verify public Scaladoc staging for CAR packaging.")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
     val cozyDevelopmentRuntimeManifest = taskKey[File]("Write development runtime admission evidence for a CAR project.")
     val cozyRuntimeEvidenceFiles = taskKey[Seq[File]]("Prepare the complete development runtime evidence set.")
@@ -675,6 +877,17 @@ object CozyPlugin extends AutoPlugin {
       output
     },
 
+    cozyScaladocArchive := {
+      val staging = target.value / "cozy" / "scaladoc"
+      if (CozyScaladocArchive.exists(staging))
+        CozyScaladocArchive.verify(staging, baseDirectory.value)
+      else {
+        CozyScaladocArchive.requirePublicOptions((Compile / scalacOptions).value)
+        val documentation = (Compile / doc).value
+        CozyScaladocArchive.stage(documentation, staging, baseDirectory.value)
+      }
+    },
+
     cozyComponentApiJar := {
       val log = streams.value.log
       val descriptor = target.value / "cozy" / "component-api-descriptor.json"
@@ -758,6 +971,7 @@ object CozyPlugin extends AutoPlugin {
     cozyBuildCar := {
       val sourcedir = cozySourceDir.value
       val log = streams.value.log
+      val scaladoc = cozyScaladocArchive.value
       val publication = CarPublicationCoordinate._project(
         cozyProjectMetadata.value,
         scalaBinaryVersion.value,
@@ -810,7 +1024,8 @@ object CozyPlugin extends AutoPlugin {
         basedir = baseDirectory.value,
         delegateprojectdir = cozyDelegateProjectDir.value,
         delegatecommand = cozyDelegateCommand.value,
-        log = log
+        log = log,
+        scaladocdir = Some(scaladoc)
       )
 
       streams.value.log.info(s"[sbt-cozy] built CAR: ${archive.getAbsolutePath}")
@@ -3157,7 +3372,8 @@ private[cozy] object CozySbtBridge {
     basedir: File,
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
-    log: Logger
+    log: Logger,
+    scaladocdir: Option[File] = None
   ): Unit = {
     _run(
       _request(
@@ -3181,6 +3397,7 @@ private[cozy] object CozySbtBridge {
             _csv_arg("model-metadata", modelmetadata.map(_.getAbsolutePath)) ++
             Vector("--abi-manifest-output", abimanifestoutput.getAbsolutePath) ++
             Vector("--project-dir", projectdir.getAbsolutePath) ++
+            scaladocdir.toVector.flatMap(directory => Vector("--scaladoc-dir", directory.getAbsolutePath)) ++
             _map_arg("extensions", extensions) ++
             _map_arg("config", config)
       ),

@@ -1,0 +1,25 @@
+project:
+  namespace: org.example.fixture
+  id: ComponentScaladocPackaging
+  kind: car
+  name: fixture-component-scaladoc-packaging
+  component:
+    version: "0.1.0"
+build:
+  cozyVersion: "0.3.2.4"
+  dependencies:
+    compile:
+      - "org.goldenport::goldenport-cncf:0.5.2"
+packaging:
+  kind: car
+  car:
+    manifest_metadata:
+      component: org.example.fixture.ComponentScaladocPackaging
+      namespace: org.example.fixture
+      id: ComponentScaladocPackaging
+      qualifiedIdentity: org.example.fixture.ComponentScaladocPackaging
+    runtime:
+      cncf:
+        minimum: "0.5.2"
+        tested:
+          - "0.5.2"

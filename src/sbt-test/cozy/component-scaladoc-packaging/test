@@ -1,0 +1,16 @@
+> clean
+> cozyScaladocArchive
+> verifyScaladocStaging
+> verifyScaladocDisclosure
+> tamperScaladocDeclaredContent
+-> cozyScaladocArchive
+> clean
+> cozyScaladocArchive
+> verifyScaladocStaging
+> removeScaladocDeclaredContent
+-> cozyScaladocArchive
+> clean
+> cozyScaladocArchive
+> verifyScaladocStaging
+> changeScaladocSourceAfterStaging
+-> cozyScaladocArchive
