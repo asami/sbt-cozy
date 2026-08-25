@@ -559,6 +559,43 @@ private[cozy] object CozyScaladocArchive {
   private def _is_sha256(value: String): Boolean = _sha256_pattern.pattern.matcher(value).matches()
 }
 
+private[cozy] final case class CozyReleaseSourcePolicy(mode: String, license: String)
+private[cozy] final case class CozyReleaseSourceVerification(
+  managedmainsources: Seq[File],
+  managedmainroots: Seq[File],
+  managedtestsources: Seq[File],
+  managedtestroots: Seq[File],
+  compilescalacoptions: Seq[String],
+  testscalacoptions: Seq[String],
+  dependencies: Seq[String],
+  generators: Seq[String]
+)
+private[cozy] object CozyReleaseSourcePolicy {
+  private val _prefix = "packaging.car.release_source"
+
+  def resolve(metadata: CozyProjectConfig): Option[CozyReleaseSourcePolicy] = {
+    val authored = (metadata.values.keySet ++ metadata.lists.keySet).filter { key =>
+      key == _prefix || key.startsWith(_prefix + ".")
+    }
+    if (authored.isEmpty) None
+    else {
+      val fields = authored.collect {
+        case key if key.startsWith(_prefix + ".") => key.substring(_prefix.length + 1)
+      }
+      val unsupported = fields.filterNot(field => field == "mode" || field == "license")
+      if (unsupported.nonEmpty)
+        sys.error(s"[sbt-cozy] unsupported packaging.car.release_source fields: ${unsupported.toVector.sorted.mkString(", ")}")
+      val mode = metadata.value(_prefix + ".mode").getOrElse("")
+      val license = metadata.value(_prefix + ".license").getOrElse("")
+      if (mode != "public" && mode != "restricted")
+        sys.error("[sbt-cozy] packaging.car.release_source.mode must be exactly public or restricted")
+      if (license.isEmpty || license.exists(ch => ch == '\n' || ch == '\r' || ch == '\u0000') || license.contains('\\') || license.contains('/'))
+        sys.error("[sbt-cozy] packaging.car.release_source.license must be nonempty and safe")
+      Some(CozyReleaseSourcePolicy(mode, license))
+    }
+  }
+}
+
 object CozyPlugin extends AutoPlugin {
   object autoImport {
     type CarDependency = org.goldenport.cozy.CarDependency
@@ -582,6 +619,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
     val cozySourceArchive = taskKey[File]("Write the canonical component source archive inventory evidence.")
+    val cozyReleaseSourceArchive = taskKey[File]("Stage and strictly verify the opted-in Component release source.")
     val cozyScaladocArchive = taskKey[File]("Generate or strictly verify public Scaladoc staging for CAR packaging.")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
     val cozyDevelopmentRuntimeManifest = taskKey[File]("Write development runtime admission evidence for a CAR project.")
@@ -877,6 +915,43 @@ object CozyPlugin extends AutoPlugin {
       output
     },
 
+    cozyReleaseSourceArchive := {
+      val policy = CozyReleaseSourcePolicy.resolve(cozyProjectMetadata.value).getOrElse(
+        sys.error("[sbt-cozy] cozyReleaseSourceArchive requires packaging.car.release_source.mode and license")
+      )
+      val output = target.value / "cozy" / "release-source"
+      val dependencies = (Compile / update).value.allModules
+        .map(module => s"${module.organization}:${module.name}:${module.revision}")
+        .distinct
+        .sorted
+      val generators = (
+        cozyProjectMetadata.value.value("build.cozyVersion").map(version => s"org.simplemodeling:cozy:$version").toSeq ++
+          Seq(s"backend:${cozyGeneratorBackend.value}")
+      ).distinct.sorted
+      CozySbtBridge.writeComponentReleaseSource(
+        projectdir = baseDirectory.value,
+        output = output,
+        mode = policy.mode,
+        license = policy.license,
+        managedmainsources = (Compile / managedSources).value,
+        managedmainroots = (Compile / managedSourceDirectories).value,
+        managedtestsources = (Test / managedSources).value,
+        managedtestroots = (Test / managedSourceDirectories).value,
+        compilescalacoptions = (Compile / scalacOptions).value,
+        testscalacoptions = (Test / scalacOptions).value,
+        dependencies = dependencies,
+        generators = generators,
+        verifyexisting = output.exists(),
+        basedir = baseDirectory.value,
+        delegateprojectdir = cozyDelegateProjectDir.value,
+        delegatecommand = cozyDelegateCommand.value,
+        log = streams.value.log
+      )
+      if (!(output / "release-source-manifest.json").isFile)
+        sys.error(s"[sbt-cozy] release-source staging was not created: ${output.getAbsolutePath}")
+      output
+    },
+
     cozyScaladocArchive := {
       val staging = target.value / "cozy" / "scaladoc"
       if (CozyScaladocArchive.exists(staging))
@@ -972,6 +1047,46 @@ object CozyPlugin extends AutoPlugin {
       val sourcedir = cozySourceDir.value
       val log = streams.value.log
       val scaladoc = cozyScaladocArchive.value
+      val releasesource = CozyReleaseSourcePolicy.resolve(cozyProjectMetadata.value).map { policy =>
+        val output = target.value / "cozy" / "release-source"
+        val dependencies = (Compile / update).value.allModules
+          .map(module => s"${module.organization}:${module.name}:${module.revision}")
+          .distinct
+          .sorted
+        val generators = (
+          cozyProjectMetadata.value.value("build.cozyVersion").map(version => s"org.simplemodeling:cozy:$version").toSeq ++
+            Seq(s"backend:${cozyGeneratorBackend.value}")
+        ).distinct.sorted
+        CozySbtBridge.writeComponentReleaseSource(
+          projectdir = baseDirectory.value,
+          output = output,
+          mode = policy.mode,
+          license = policy.license,
+          managedmainsources = (Compile / managedSources).value,
+          managedmainroots = (Compile / managedSourceDirectories).value,
+          managedtestsources = (Test / managedSources).value,
+          managedtestroots = (Test / managedSourceDirectories).value,
+          compilescalacoptions = (Compile / scalacOptions).value,
+          testscalacoptions = (Test / scalacOptions).value,
+          dependencies = dependencies,
+          generators = generators,
+          verifyexisting = output.exists(),
+          basedir = baseDirectory.value,
+          delegateprojectdir = cozyDelegateProjectDir.value,
+          delegatecommand = cozyDelegateCommand.value,
+          log = log
+        )
+        output -> CozyReleaseSourceVerification(
+          (Compile / managedSources).value,
+          (Compile / managedSourceDirectories).value,
+          (Test / managedSources).value,
+          (Test / managedSourceDirectories).value,
+          (Compile / scalacOptions).value,
+          (Test / scalacOptions).value,
+          dependencies,
+          generators
+        )
+      }
       val publication = CarPublicationCoordinate._project(
         cozyProjectMetadata.value,
         scalaBinaryVersion.value,
@@ -1025,7 +1140,9 @@ object CozyPlugin extends AutoPlugin {
         delegateprojectdir = cozyDelegateProjectDir.value,
         delegatecommand = cozyDelegateCommand.value,
         log = log,
-        scaladocdir = Some(scaladoc)
+        scaladocdir = Some(scaladoc),
+        releasesourcedir = releasesource.map(_._1),
+        releasesourceverification = releasesource.map(_._2)
       )
 
       streams.value.log.info(s"[sbt-cozy] built CAR: ${archive.getAbsolutePath}")
@@ -3355,6 +3472,50 @@ private[cozy] object CozySbtBridge {
       log
     )
 
+  def writeComponentReleaseSource(
+    projectdir: File,
+    output: File,
+    mode: String,
+    license: String,
+    managedmainsources: Seq[File],
+    managedmainroots: Seq[File],
+    managedtestsources: Seq[File],
+    managedtestroots: Seq[File],
+    compilescalacoptions: Seq[String],
+    testscalacoptions: Seq[String],
+    dependencies: Seq[String],
+    generators: Seq[String],
+    verifyexisting: Boolean,
+    basedir: File,
+    delegateprojectdir: Option[File],
+    delegatecommand: Seq[String],
+    log: Logger
+  ): Unit = {
+    val evidence =
+      "{\"compileScalacOptions\":" + _json_array(compilescalacoptions) +
+        ",\"testScalacOptions\":" + _json_array(testscalacoptions) +
+        ",\"dependencies\":" + _json_array(dependencies) +
+        ",\"generators\":" + _json_array(generators) + "}"
+    val args = Vector(
+      "--project-dir", projectdir.getAbsolutePath,
+      "--save", output.getAbsolutePath,
+      "--mode", mode,
+      "--license", license,
+      "--managed-main-sources", _json_array(managedmainsources.map(_.getAbsolutePath)),
+      "--managed-main-roots", _json_array(managedmainroots.map(_.getAbsolutePath)),
+      "--managed-test-sources", _json_array(managedtestsources.map(_.getAbsolutePath)),
+      "--managed-test-roots", _json_array(managedtestroots.map(_.getAbsolutePath)),
+      "--build-evidence", evidence
+    ) ++ (if (verifyexisting) Vector("--verify-existing", "true") else Vector.empty)
+    _run(
+      _request(action = "write-component-release-source", arguments = args),
+      basedir,
+      delegateprojectdir,
+      delegatecommand,
+      log
+    )
+  }
+
   def packageCar(
     archive: File,
     mainjar: File,
@@ -3373,8 +3534,12 @@ private[cozy] object CozySbtBridge {
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
     log: Logger,
-    scaladocdir: Option[File] = None
+    scaladocdir: Option[File] = None,
+    releasesourcedir: Option[File] = None,
+    releasesourceverification: Option[CozyReleaseSourceVerification] = None
   ): Unit = {
+    if (releasesourcedir.isDefined != releasesourceverification.isDefined)
+      sys.error("[sbt-cozy] release-source packaging requires directory and verification inputs together")
     _run(
       _request(
         action = "package-car",
@@ -3398,6 +3563,20 @@ private[cozy] object CozySbtBridge {
             Vector("--abi-manifest-output", abimanifestoutput.getAbsolutePath) ++
             Vector("--project-dir", projectdir.getAbsolutePath) ++
             scaladocdir.toVector.flatMap(directory => Vector("--scaladoc-dir", directory.getAbsolutePath)) ++
+            releasesourcedir.toVector.flatMap(directory => Vector("--release-source-dir", directory.getAbsolutePath)) ++
+            releasesourceverification.toVector.flatMap { verification =>
+              Vector(
+                "--release-source-managed-main-sources", _json_array(verification.managedmainsources.map(_.getAbsolutePath)),
+                "--release-source-managed-main-roots", _json_array(verification.managedmainroots.map(_.getAbsolutePath)),
+                "--release-source-managed-test-sources", _json_array(verification.managedtestsources.map(_.getAbsolutePath)),
+                "--release-source-managed-test-roots", _json_array(verification.managedtestroots.map(_.getAbsolutePath)),
+                "--release-source-build-evidence",
+                "{\"compileScalacOptions\":" + _json_array(verification.compilescalacoptions) +
+                  ",\"testScalacOptions\":" + _json_array(verification.testscalacoptions) +
+                  ",\"dependencies\":" + _json_array(verification.dependencies) +
+                  ",\"generators\":" + _json_array(verification.generators) + "}"
+              )
+            } ++
             _map_arg("extensions", extensions) ++
             _map_arg("config", config)
       ),
@@ -3798,6 +3977,9 @@ private[cozy] object CozySbtBridge {
       case '\t' => "\\t"
       case c => c.toString
     } + "\""
+
+  private def _json_array(values: Seq[String]): String =
+    values.map(_json).mkString("[", ",", "]")
 
   private def _json_map(values: Map[String, String]): String =
     values.toVector.sortBy(_._1).map { case (k, v) => s"${_json(k)}: ${_json(v)}" }.mkString("{", ", ", "}")
