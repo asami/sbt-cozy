@@ -2,6 +2,19 @@
 > compile
 > cozyPrepareRuntime
 > verifyInitialRuntimeEvidence
+> removeSourceRuntimeCarrier
+> cozyPrepareRuntime
+> verifyAbsentRuntimeEvidence
+> restoreSourceRuntimeCarrier
+> cozyPrepareRuntime
+> verifyInitialRuntimeEvidence
+> prepareNonFileRuntimeCarrier
+> set cozyDevelopmentRuntimeManifest := target.value / "cncf.d" / "car-runtime-manifest.json"
+-> cozyRuntimeEvidenceFiles
+> reload
+> cleanupNonFileRuntimeCarrier
+> cozyPrepareRuntime
+> verifyInitialRuntimeEvidence
 > rewriteRuntimeContractEvidence
 > cozyPrepareRuntime
 > verifyRegeneratedRuntimeEvidence

@@ -21,7 +21,7 @@ import scala.sys.process._
  *  version May. 26, 2026
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
- * @version Aug. 25, 2026
+ * @version Aug. 26, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -1485,9 +1485,15 @@ object CozyPlugin extends AutoPlugin {
       val classpath = cozyRuntimeClasspathFile.value
       val manifest = cozyDevelopmentRuntimeManifest.value
       val descriptor = target.value / "cncf.d" / "component-descriptor.json"
+      val carrier = target.value / "cncf.d" / "component-knowledge.json"
       if (!descriptor.isFile)
         sys.error(s"[sbt-cozy] development runtime descriptor was not generated: ${descriptor.getAbsolutePath}")
-      Seq(classpath, descriptor, manifest)
+      if (carrier.exists && !carrier.isFile)
+        sys.error(s"[sbt-cozy] development Component knowledge carrier is not a file: ${carrier.getAbsolutePath}")
+      if (carrier.isFile)
+        Seq(classpath, descriptor, carrier, manifest)
+      else
+        Seq(classpath, descriptor, manifest)
     },
 
     cozyPrepareRuntime := {

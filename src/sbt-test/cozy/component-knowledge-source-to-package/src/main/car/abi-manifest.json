@@ -1,0 +1,24 @@
+{
+  "format": "cozy.car.abi-manifest.v2",
+  "component": {
+    "namespace": "org.example.fixture",
+    "id": "ComponentKnowledgeSourceToPackage",
+    "version": "0.1.0-SNAPSHOT"
+  },
+  "abi": {
+    "version": 1,
+    "exports": {
+      "components": [
+        {
+          "namespace": "org.example.fixture",
+          "id": "ComponentKnowledgeSourceToPackage"
+        }
+      ],
+      "services": [],
+      "operations": [],
+      "types": [],
+      "entities": []
+    },
+    "dependencies": []
+  }
+}

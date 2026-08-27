@@ -1,0 +1,41 @@
+{
+  "schema": "cncf.component-knowledge-consumer.v1",
+  "componentId": "org.example.fixture.ComponentKnowledgeSourceToPackage",
+  "logicalRelease": "0.1.0-SNAPSHOT",
+  "resources": [
+    {
+      "logicalIdentity": {
+        "componentId": "org.example.fixture.ComponentKnowledgeSourceToPackage",
+        "logicalRelease": "0.1.0-SNAPSHOT",
+        "parentComponentId": null,
+        "childRole": "Documentation",
+        "logicalResource": "urn:cncf:resource:fixture:component-knowledge-source-to-package"
+      },
+      "logicalPath": "documentation/fixture.md",
+      "kind": "documentation",
+      "role": "documentation",
+      "language": "en",
+      "mediaType": "text/markdown",
+      "size": 1,
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "metadata": {
+        "authority": "component",
+        "stability": "stable",
+        "source": "component-declared",
+        "license": "Apache-2.0",
+        "disclosure": "metadata-only"
+      },
+      "availability": "available",
+      "integrity": "verified",
+      "authorization": "granted",
+      "provenance": {
+        "sourceKind": "expanded-car",
+        "artifactCoordinate": "org.example.fixture:component-knowledge-source-to-package:0.1.0-SNAPSHOT",
+        "logicalSource": "component-car:fixture",
+        "resolutionStep": "expanded-car:1",
+        "externalDeploymentRequired": false,
+        "matchingDigest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    }
+  ]
+}

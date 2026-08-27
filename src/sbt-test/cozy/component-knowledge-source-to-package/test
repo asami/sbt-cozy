@@ -1,0 +1,8 @@
+> clean
+> compile
+> doc09TamperSourceConsumerIdentity
+-> cozyPrepareRuntime
+> doc09RestoreSourceConsumerIdentity
+> cozyPrepareRuntime
+> doc09VerifyDevelopmentEvidence
+> doc09BuildAndVerifyPackage

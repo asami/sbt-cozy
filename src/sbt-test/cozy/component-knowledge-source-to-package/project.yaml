@@ -1,0 +1,25 @@
+project:
+  namespace: org.example.fixture
+  id: ComponentKnowledgeSourceToPackage
+  kind: car
+  name: fixture-component-knowledge-source-to-package
+  component:
+    version: "0.1.0-SNAPSHOT"
+build:
+  cozyVersion: "0.3.3-SNAPSHOT"
+  dependencies:
+    compile:
+      - "org.goldenport::goldenport-cncf:0.5.2"
+packaging:
+  kind: car
+  car:
+    manifest_metadata:
+      component: org.example.fixture.ComponentKnowledgeSourceToPackage
+      namespace: org.example.fixture
+      id: ComponentKnowledgeSourceToPackage
+      qualifiedIdentity: org.example.fixture.ComponentKnowledgeSourceToPackage
+    runtime:
+      cncf:
+        minimum: "0.5.2"
+        tested:
+          - "0.5.2"

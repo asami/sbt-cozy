@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 3,
+  "component": {
+    "namespace": "org.example.fixture",
+    "id": "ComponentKnowledgeSourceToPackage",
+    "version": "0.1.0-SNAPSHOT"
+  }
+}
