@@ -2981,7 +2981,8 @@ ${body}
 
 private[cozy] object CozyDelegatedGenerator {
   private val _manifest_relative_path = "sbt-cozy/generated-files.txt"
-  private val _source_marker = "/src_managed/main/scala/"
+  private val _source_marker = "/src_managed/main/"
+  private val _legacy_source_marker = "/src_managed/main/scala/"
 
   def generatedFiles(targetdir: File): Seq[File] =
     (targetdir ** "*.scala").get.filter(_.isFile).sortBy(_.getAbsolutePath)
@@ -3195,8 +3196,13 @@ private[cozy] object CozyDelegatedGenerator {
       .sortBy(_.getAbsolutePath)
 
     generatedsources.map { generated =>
-      val relative = _relative_from_generated_root(generated)
+      val relative = _relative_from_generated_root(generated, _source_marker).getOrElse(generated.getName)
       val destination = targetdir / _normalize_path(relative)
+      _relative_from_generated_root(generated, _legacy_source_marker).
+        map(relative => targetdir / _normalize_path(relative)).
+        filter(_.getAbsolutePath != destination.getAbsolutePath).
+        filter(_.isFile).
+        foreach(IO.delete)
       IO.createDirectory(destination.getParentFile)
       IO.write(destination, IO.read(generated))
       destination
@@ -3245,14 +3251,14 @@ private[cozy] object CozyDelegatedGenerator {
     IO.write(manifestfile, content)
   }
 
-  private def _relative_from_generated_root(file: File): String = {
+  private def _relative_from_generated_root(file: File, marker: String): Option[String] = {
     val absolute = file.getAbsolutePath
     val normalized = absolute.replace('\\', '/')
-    val index = normalized.indexOf(_source_marker)
+    val index = normalized.indexOf(marker)
     if (index < 0) {
-      file.getName
+      None
     } else {
-      normalized.substring(index + _source_marker.length)
+      Some(normalized.substring(index + marker.length))
     }
   }
 

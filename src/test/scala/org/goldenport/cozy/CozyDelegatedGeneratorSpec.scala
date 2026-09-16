@@ -652,6 +652,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           val source = _write(dir / "src" / "main" / "cozy" / "model.cml", "package demo\nentity Model\n")
           val targetbasedir = dir / "target"
           val targetdir = targetbasedir / "scala-2.12" / "src_managed" / "main"
+          val legacygenerated = _write(targetdir / "demo" / "Generated.scala", "package demo\nobject Generated\n")
           val workdir = targetbasedir / "sbt-cozy" / "delegate-work"
           val delegatedscala =
             workdir / "run-0" / "target" / "scala-2.12" / "src_managed" / "main" / "scala" / "demo" / "Generated.scala"
@@ -690,6 +691,8 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           Then("managed Scala and final provenance remain while delegate work is removed")
           generated should have size 1
           generated.head.isFile shouldBe true
+          legacygenerated.isFile shouldBe false
+          generated.head.getAbsolutePath.replace('\\', '/') should endWith("/src_managed/main/scala/demo/Generated.scala")
           IO.read(generated.head) should include("object Generated")
           installedprovenance.isFile shouldBe true
           CozyDelegatedGenerator.hasGenerationProvenance(targetbasedir) shouldBe true
