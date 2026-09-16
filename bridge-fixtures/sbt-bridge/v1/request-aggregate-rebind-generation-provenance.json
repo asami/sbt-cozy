@@ -1,0 +1,9 @@
+{
+  "version": "v1",
+  "action": "aggregate-rebind-generation-provenance",
+  "arguments": [
+    "--delegated-inputs-json", "[{\"delegatedProvenance\":\"/tmp/delegate-work/run-alpha/target/cozy/generation-provenance.json\",\"delegatedOutputRoot\":\"/tmp/delegate-work/run-alpha\"},{\"delegatedProvenance\":\"/tmp/delegate-work/run-beta/target/cozy/generation-provenance.json\",\"delegatedOutputRoot\":\"/tmp/delegate-work/run-beta\"}]",
+    "--project-root", "/tmp/sample-project"
+  ],
+  "settings": {}
+}

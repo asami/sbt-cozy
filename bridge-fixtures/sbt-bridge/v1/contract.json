@@ -5,6 +5,7 @@
   "supportedActions": [
     "generate",
     "rebind-generation-provenance",
+    "aggregate-rebind-generation-provenance",
     "prepare-development-runtime-evidence",
     "package-car",
     "package-sar",

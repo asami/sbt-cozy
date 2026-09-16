@@ -7,6 +7,7 @@ Contract rules:
 - protocol: `sbt-bridge`
 - version: `v1`
 - supported actions: `generate`, `rebind-generation-provenance`,
+  `aggregate-rebind-generation-provenance`,
   `prepare-development-runtime-evidence`,
   `package-car`, `package-sar`, `publish-car`, `publish-sar`,
   `publish-project`, `publish-video`, `distribute-samples`, `index-warehouse`
@@ -27,6 +28,13 @@ Request contract:
 `prepare-development-runtime-evidence` requires `--project-dir`,
 `--runtime-classpath-file`, and `--save`. It writes mutable-development
 runtime admission evidence without hashing compiled class bytes.
+
+`aggregate-rebind-generation-provenance` requires `--delegated-inputs-json`
+and `--project-root`. The JSON value is a non-empty array of exact
+`{delegatedProvenance, delegatedOutputRoot}` objects. The bridge forwards every
+explicit pair once to Cozy's aggregate provenance authority; it does not
+enumerate, select, reorder to choose, deduplicate, merge, or derive identity
+from hashes. `rebind-generation-provenance` remains the legacy one-pair action.
 
 Response contract in `v1`:
 - runtime success/failure is process-oriented

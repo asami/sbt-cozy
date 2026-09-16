@@ -9,7 +9,7 @@ import sbt._
 /*
  * @since   Jul. 12, 2026
  *  version Aug.  8, 2026
- * @version Aug. 21, 2026
+ * @version Sep. 17, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -543,35 +543,106 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         }
       }
 
-      "reject multiple delegated provenance documents instead of selecting one" in {
-        Given("two CNCF-aware CML generation runs for one CAR")
+      "aggregate every delegated provenance document through one Cozy bridge request" in {
+        Given("two isolated delegated provenance documents and an aggregate bridge delegate")
         _with_temp_dir("sbt-cozy-multiple-generation-provenance") { dir =>
           val workdir = dir / "target" / "sbt-cozy" / "delegate-work"
           val targetdir = dir / "target"
-          Vector(0, 1).foreach { index =>
-            _write(
-              workdir / s"run-$index" / "target" / "cozy" / "generation-provenance.json",
-              s"""{"run":$index}"""
-            )
-          }
+          val firstroot = workdir / "run-alpha"
+          val secondroot = workdir / "run-beta"
+          val first = _write(
+            firstroot / "target" / "cozy" / "generation-provenance.json",
+            "{\"run\":\"alpha\"}\n"
+          )
+          val second = _write(
+            secondroot / "target" / "cozy" / "generation-provenance.json",
+            "{\"run\":\"beta\"}\n"
+          )
+          val capturedrequest = dir / "captured-request.json"
+          val installed = targetdir / "cozy" / "generation-provenance.json"
+          val delegate = _write(
+            dir / "fake-cozy",
+            s"""#!/bin/sh
+               |cp "$$4" "${capturedrequest.getAbsolutePath}"
+               |mkdir -p "${installed.getParentFile.getAbsolutePath}"
+               |printf '%s\\n' '{"schema":"cozy.generation-provenance.v2"}' > "${installed.getAbsolutePath}"
+               |""".stripMargin
+          )
+          delegate.setExecutable(true) shouldBe true
 
-          When("sbt-cozy attempts to install singular v1 provenance")
+          When("sbt-cozy installs the aggregate provenance output")
+          CozyDelegatedGenerator.installGenerationProvenance(
+            workdir = workdir,
+            targetbasedir = targetdir,
+            basedir = dir,
+            delegateprojectdir = None,
+            delegatecommand = Seq(delegate.getAbsolutePath),
+            log = sbt.util.Logger.Null
+          )
+
+          Then("both source-root pairs are sent once and the final V2 output remains available")
+          val request = IO.read(capturedrequest)
+          val firstpair = s"""{\\\"delegatedProvenance\\\":\\\"${first.getAbsolutePath}\\\",\\\"delegatedOutputRoot\\\":\\\"${firstroot.getAbsolutePath}\\\"}"""
+          val secondpair = s"""{\\\"delegatedProvenance\\\":\\\"${second.getAbsolutePath}\\\",\\\"delegatedOutputRoot\\\":\\\"${secondroot.getAbsolutePath}\\\"}"""
+          request should include("\"action\": \"aggregate-rebind-generation-provenance\"")
+          request should not include("\"action\": \"rebind-generation-provenance\"")
+          _count_occurrences(request, firstpair) shouldBe 1
+          _count_occurrences(request, secondpair) shouldBe 1
+          IO.read(installed) shouldBe "{\"schema\":\"cozy.generation-provenance.v2\"}\n"
+          CozyDelegatedGenerator.hasGenerationProvenance(targetdir) shouldBe true
+        }
+      }
+
+      "preserve a pre-existing final provenance output when aggregate rebinding fails" in {
+        Given("two isolated delegated provenance documents, an existing final output, and a failing aggregate delegate")
+        _with_temp_dir("sbt-cozy-failed-multiple-generation-provenance") { dir =>
+          val workdir = dir / "target" / "sbt-cozy" / "delegate-work"
+          val targetdir = dir / "target"
+          val firstroot = workdir / "run-alpha"
+          val secondroot = workdir / "run-beta"
+          val first = _write(
+            firstroot / "target" / "cozy" / "generation-provenance.json",
+            "{\"run\":\"alpha\"}\n"
+          )
+          val second = _write(
+            secondroot / "target" / "cozy" / "generation-provenance.json",
+            "{\"run\":\"beta\"}\n"
+          )
+          val capturedrequest = dir / "captured-request.json"
+          val installed = _write(
+            targetdir / "cozy" / "generation-provenance.json",
+            "{\"schema\":\"cozy.generation-provenance.v2\",\"old\":true}\n"
+          )
+          val oldbytes = IO.read(installed)
+          val delegate = _write(
+            dir / "failing-cozy",
+            s"""#!/bin/sh
+               |cp "$$4" "${capturedrequest.getAbsolutePath}"
+               |exit 17
+               |""".stripMargin
+          )
+          delegate.setExecutable(true) shouldBe true
+
+          When("sbt-cozy attempts aggregate installation")
           val error = intercept[RuntimeException] {
             CozyDelegatedGenerator.installGenerationProvenance(
               workdir = workdir,
               targetbasedir = targetdir,
               basedir = dir,
               delegateprojectdir = None,
-              delegatecommand = Seq("unused"),
+              delegatecommand = Seq(delegate.getAbsolutePath),
               log = sbt.util.Logger.Null
             )
           }
 
-          Then("the source-of-truth ambiguity fails explicitly")
-          error.getMessage should include(
-            "cozy.generation-provenance.v1 supports one CML source per CAR"
-          )
-          CozyDelegatedGenerator.hasGenerationProvenance(targetdir) shouldBe false
+          Then("the full request is rejected while the existing final bytes remain unchanged")
+          val request = IO.read(capturedrequest)
+          val firstpair = s"""{\\\"delegatedProvenance\\\":\\\"${first.getAbsolutePath}\\\",\\\"delegatedOutputRoot\\\":\\\"${firstroot.getAbsolutePath}\\\"}"""
+          val secondpair = s"""{\\\"delegatedProvenance\\\":\\\"${second.getAbsolutePath}\\\",\\\"delegatedOutputRoot\\\":\\\"${secondroot.getAbsolutePath}\\\"}"""
+          error.getMessage should include("cozy packaging delegate failed")
+          _count_occurrences(request, firstpair) shouldBe 1
+          _count_occurrences(request, secondpair) shouldBe 1
+          IO.read(installed) shouldBe oldbytes
         }
       }
 
@@ -877,4 +948,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
     args.takeRight(2).head shouldBe "--request"
     args.last should endWith(".json")
   }
+
+  private def _count_occurrences(value: String, needle: String): Int =
+    value.sliding(needle.length).count(_ == needle)
 }

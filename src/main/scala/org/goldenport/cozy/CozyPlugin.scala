@@ -21,7 +21,7 @@ import scala.sys.process._
  *  version May. 26, 2026
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
- * @version Aug. 26, 2026
+ * @version Sep. 17, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -3122,9 +3122,18 @@ private[cozy] object CozyDelegatedGenerator {
           delegateCommand = delegatecommand,
           log = log
         )
-      case _ =>
-        sys.error(
-          s"[sbt-cozy] cozy.generation-provenance.v1 supports one CML source per CAR; generated ${provenance.size}: ${provenance.map(_.getAbsolutePath).mkString(", ")}"
+      case sources =>
+        val delegatedinputs = sources.map { source =>
+          val delegatedroot = source.getParentFile.getParentFile.getParentFile
+          source -> delegatedroot
+        }
+        CozySbtBridge.aggregateRebindGenerationProvenance(
+          delegatedInputs = delegatedinputs,
+          projectRoot = basedir,
+          baseDirectory = basedir,
+          delegateProjectDirectory = delegateprojectdir,
+          delegateCommand = delegatecommand,
+          log = log
         )
     }
   }
@@ -3423,6 +3432,31 @@ private[cozy] object CozySbtBridge {
         arguments = Vector(
           "--delegated-provenance", delegatedProvenance.getAbsolutePath,
           "--delegated-output-root", delegatedOutputRoot.getAbsolutePath,
+          "--project-root", projectRoot.getAbsolutePath
+        )
+      ),
+      baseDirectory,
+      delegateProjectDirectory,
+      delegateCommand,
+      log
+    )
+
+  def aggregateRebindGenerationProvenance(
+    delegatedInputs: Seq[(File, File)],
+    projectRoot: File,
+    baseDirectory: File,
+    delegateProjectDirectory: Option[File],
+    delegateCommand: Seq[String],
+    log: Logger
+  ): Unit =
+    _run(
+      _request(
+        action = "aggregate-rebind-generation-provenance",
+        arguments = Vector(
+          "--delegated-inputs-json",
+          delegatedInputs.map { case (delegatedprovenance, delegatedoutputroot) =>
+            s"""{"delegatedProvenance":${_json(delegatedprovenance.getAbsolutePath)},"delegatedOutputRoot":${_json(delegatedoutputroot.getAbsolutePath)}}"""
+          }.mkString("[", ",", "]"),
           "--project-root", projectRoot.getAbsolutePath
         )
       ),
