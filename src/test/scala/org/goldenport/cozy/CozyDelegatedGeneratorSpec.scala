@@ -9,7 +9,7 @@ import sbt._
 /*
  * @since   Jul. 12, 2026
  *  version Aug.  8, 2026
- * @version Sep. 17, 2026
+ * @version Sep. 28, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -59,8 +59,8 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         )
       }
 
-      "reject missing exact generation authorities for a CAR project" in {
-        Given("CAR metadata without a Cozy generator or CNCF compile target")
+      "reject a missing CNCF compile target for a CAR project" in {
+        Given("CAR metadata without a CNCF compile target")
         val metadata = CozyProjectConfig.parse(Seq(
           "project:",
           "  kind: car",
@@ -68,24 +68,37 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           "  kind: car"
         ))
 
-        When("sbt-cozy resolves generation versions and the delegate")
+        When("sbt-cozy resolves generation versions and the delegate command")
         val versionerror = intercept[RuntimeException] {
           CozyGenerationVersionContract.projectVersions(metadata)
         }
         val delegateerror = intercept[RuntimeException] {
-          CozyGenerationVersionContract.delegateVersion(
-            metadata,
-            Some("0.3.1-SNAPSHOT")
-          )
+          CozyGenerationVersionContract.delegateCommand(metadata, None, Seq.empty)
         }
 
-        Then("ambient delegate configuration cannot replace project-owned authority")
+        Then("a Cozy override cannot replace the project-owned CNCF authority")
         versionerror.getMessage should include(
-          "CAR/SAR generation requires project.yaml build.cozyVersion"
+          "CAR/SAR generation requires exactly one project.yaml CNCF compile dependency"
         )
         delegateerror.getMessage should include(
-          "CAR/SAR delegated generation requires project.yaml build.cozyVersion"
+          "CAR/SAR generation requires exactly one project.yaml CNCF compile dependency"
         )
+      }
+
+      "select Cozy from the CNCF target when no Cozy override exists" in {
+        Given("CAR metadata with a CNCF compile target and no Cozy version")
+        val metadata = CozyProjectConfig.parse(Seq(
+          "project:", "  kind: car", "build:", "  dependencies:", "    compile:",
+          "      - org.goldenport::goldenport-cncf:0.5.2"
+        ))
+
+        When("the project versions and delegate are resolved")
+        val versions = CozyGenerationVersionContract.projectVersions(metadata)
+        val command = CozyGenerationVersionContract.delegateCommand(metadata, None, Seq.empty)
+
+        Then("the exact CNCF version reaches the launcher without guessing a Cozy version")
+        versions shouldBe Map("generation.versions.cncf" -> "0.5.2")
+        command shouldBe Seq("cozy", "--cozy-for-cncf", "0.5.2")
       }
 
       "reject duplicate CNCF compile dependencies even when their versions agree" in {
@@ -118,19 +131,25 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         )
       }
 
-      "resolve CAR and SAR release and snapshot versions to Coursier delegates" in {
+      "pass CAR and SAR release and snapshot versions to the Cozy launcher" in {
         Given("CAR release and SAR snapshot metadata with project-owned Cozy versions")
         val carmetadata = CozyProjectConfig.parse(Seq(
           "project:",
           "  kind: car",
           "build:",
-          "  cozyVersion: 0.3.1"
+          "  cozyVersion: 0.3.1",
+          "  dependencies:",
+          "    compile:",
+          "      - org.goldenport::goldenport-cncf:0.5.2"
         ))
         val sarmetadata = CozyProjectConfig.parse(Seq(
           "project:",
           "  kind: sar",
           "build:",
-          "  cozyVersion: 0.3.2-SNAPSHOT"
+          "  cozyVersion: 0.3.2-SNAPSHOT",
+          "  dependencies:",
+          "    compile:",
+          "      - org.goldenport::goldenport-cncf:0.5.2"
         ))
 
         When("sbt-cozy selects their delegated generation commands")
@@ -146,10 +165,31 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         )
 
         Then("each archive project launches the matching project-owned Cozy runtime")
-        carcommand shouldBe CozySbtBridge.coursierCommand("0.3.1")
+        carcommand shouldBe CozySbtBridge.launcherCommand("0.3.1")
+        carcommand.head shouldBe "cozy"
         carcommand should contain inOrder ("--runtime", "0.3.1")
-        sarcommand shouldBe CozySbtBridge.coursierCommand("0.3.2-SNAPSHOT")
+        sarcommand shouldBe CozySbtBridge.launcherCommand("0.3.2-SNAPSHOT")
+        sarcommand.head shouldBe "cozy"
         sarcommand should contain inOrder ("--runtime", "0.3.2-SNAPSHOT")
+      }
+
+      "keep Coursier launch available only as an explicit legacy route" in {
+        Given("a CAR with an exact Cozy version")
+        val metadata = CozyProjectConfig.parse(Seq(
+          "project:", "  kind: car", "build:", "  cozyVersion: 0.3.1",
+          "  dependencies:", "    compile:", "      - org.goldenport::goldenport-cncf:0.5.2"
+        ))
+
+        When("the legacy cs route is selected explicitly")
+        val command = CozyGenerationVersionContract.delegateCommand(
+          metadata, None, Seq.empty, Some("cs")
+        )
+
+        Then("Coursier receives the exact Cozy version without changing the normal launcher route")
+        command.take(2) shouldBe Seq(sys.env.getOrElse("SBT_COZY_COURSIER_COMMAND", "cs"), "launch")
+        command should contain inOrder ("cozy", "--", "--runtime", "0.3.1")
+        CozyGenerationVersionContract.delegateCommand(metadata, None, Seq.empty, None) shouldBe
+          CozySbtBridge.launcherCommand("0.3.1")
       }
 
       "reject project-local delegate commands for CAR and SAR projects" in {
@@ -158,7 +198,10 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           "project:",
           "  kind: car",
           "build:",
-          "  cozyVersion: 0.3.1-SNAPSHOT"
+          "  cozyVersion: 0.3.1-SNAPSHOT",
+          "  dependencies:",
+          "    compile:",
+          "      - org.goldenport::goldenport-cncf:0.5.2"
         ))
 
         When("sbt-cozy resolves the delegated generation command")
@@ -176,7 +219,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         )
       }
 
-      "reject CAR project-directory overrides while retaining non-CAR precedence" in {
+      "accept explicit CAR project-directory overrides but reject ambient ones" in {
         Given("CAR metadata, local configured and ambient project directories, and non-CAR metadata")
         val carmetadata = CozyProjectConfig.parse(Seq(
           "project:",
@@ -194,13 +237,11 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         val ambient = file("target/sbt-cozy-test/work/cozy-delegate-project-dir/ambient")
 
         When("sbt-cozy resolves configured, ambient, and non-CAR directory settings")
-        val configurederror = intercept[RuntimeException] {
-          CozyGenerationVersionContract.delegateProjectDir(
-            carmetadata,
-            Some(configured),
-            None
-          )
-        }
+        val carconfigured = CozyGenerationVersionContract.delegateProjectDir(
+          carmetadata,
+          Some(configured),
+          None
+        )
         val ambienterror = intercept[RuntimeException] {
           CozyGenerationVersionContract.delegateProjectDir(
             carmetadata,
@@ -214,10 +255,8 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           Some(ambient)
         )
 
-        Then("CAR runtime authority rejects both local sources while library precedence remains configured")
-        configurederror.getMessage should include(
-          "CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.project_dir"
-        )
+        Then("the project-local checkout is accepted without admitting an ambient CAR override")
+        carconfigured shouldBe Some(configured)
         ambienterror.getMessage should include(
           "CAR/SAR delegated generation does not permit ambient SBT_COZY_PROJECT_DIR"
         )
@@ -244,6 +283,20 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         Then("the CAR authority requirement does not change the explicit library command")
         versions shouldBe empty
         delegate shouldBe Seq("custom-cozy", "generate")
+      }
+
+      "select a compatible Cozy runtime for a non-CAR CNCF project" in {
+        Given("a library project with one CNCF compile dependency and no Cozy override")
+        val metadata = CozyProjectConfig.parse(Seq(
+          "project:", "  kind: library", "build:", "  dependencies:", "    compile:",
+          "      - org.goldenport::goldenport-cncf:0.5.2"
+        ))
+
+        When("the default delegate command is resolved")
+        val command = CozyGenerationVersionContract.delegateCommand(metadata, None, Seq.empty)
+
+        Then("the same CNCF-based runtime selector reaches the launcher")
+        command shouldBe Seq("cozy", "--cozy-for-cncf", "0.5.2")
       }
 
       "reject contradictory project and owning-build bridge versions" in {
@@ -770,7 +823,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
       "use an explicit Cozy runtime through the launcher during development" in {
         Given("a development runtime version")
         _with_temp_dir("sbt-cozy-delegate") { dir =>
-          val command = CozySbtBridge.coursierCommand("0.2.17-SNAPSHOT")
+          val command = CozySbtBridge.launcherCommand("0.2.17-SNAPSHOT")
 
           When("the bridge command is resolved")
           val (cwd, resolved) = CozySbtBridge.resolveForTest(
@@ -783,22 +836,23 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
 
           Then("the launcher command keeps the runtime and bridge arguments")
           cwd.getAbsolutePath shouldBe dir.getAbsolutePath
-          resolved.take(2) shouldBe Seq("cs", "launch")
-          resolved should contain allOf ("--channel", "cozy", "--runtime", "0.2.17-SNAPSHOT", "--")
-          resolved should contain("https://www.simplemodeling.org/repository/cozy/coursier-channel.json")
+          resolved.take(3) shouldBe Seq("cozy", "--runtime", "0.2.17-SNAPSHOT")
           resolved.takeRight(4).take(3) shouldBe Seq("sbt-bridge", "v1", "--request")
           _assert_bridge_request_argument(resolved)
         }
       }
 
-      "retain the selected Coursier runtime for publish-car bridge requests" in {
-        Given("a selected project-owned Coursier runtime and a CAR publication request")
+      "retain the selected Cozy runtime for publish-car bridge requests" in {
+        Given("a selected project-owned Cozy runtime and a CAR publication request")
         _with_temp_dir("sbt-cozy-publish-car-runtime-delegate") { dir =>
           val metadata = CozyProjectConfig.parse(Seq(
             "project:",
             "  kind: car",
             "build:",
-            "  cozyVersion: 0.3.1-SNAPSHOT"
+            "  cozyVersion: 0.3.1-SNAPSHOT",
+            "  dependencies:",
+            "    compile:",
+            "      - org.goldenport::goldenport-cncf:0.5.2"
           ))
           val command = CozyGenerationVersionContract.delegateCommand(
             metadata,
@@ -866,7 +920,31 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
             arguments = Vector("--save", "target/sbt-cozy-test/work/cozy-delegated-generator/sample.sar")
           )
 
-          Then("sbt runs the local Cozy main class")
+          Then("the Cozy launcher receives the development checkout and bridge request")
+          cwd.getAbsolutePath shouldBe dir.getAbsolutePath
+          resolved.take(3) shouldBe Seq("cozy", "--runtime-dev-dir", cozydir.getAbsolutePath)
+          resolved.takeRight(4).take(3) shouldBe Seq("sbt-bridge", "v1", "--request")
+          _assert_bridge_request_argument(resolved)
+        }
+      }
+
+      "keep direct SBT execution available only as an explicit legacy route" in {
+        Given("a local Cozy checkout and an explicit legacy sbt route")
+        _with_temp_dir("sbt-cozy-legacy-delegate") { dir =>
+          val cozydir = dir / "cozy"
+          _write(cozydir / "build.sbt", """name := "cozy"""")
+
+          When("the bridge command is resolved")
+          val (cwd, resolved) = CozySbtBridge.resolveForTest(
+            basedir = dir,
+            delegateprojectdir = Some(cozydir),
+            delegatecommand = Seq("cozy"),
+            action = "package-sar",
+            arguments = Vector("--save", "target/sbt-cozy-test/work/cozy-delegated-generator/sample.sar"),
+            legacyroute = Some("sbt")
+          )
+
+          Then("the checkout is used only for that legacy command")
           cwd.getAbsolutePath shouldBe cozydir.getAbsolutePath
           resolved.take(4) shouldBe Seq("sbt", "--batch", "-Dsbt.server.autostart=false", "-Dsbt.supershell=false")
           resolved.last should startWith("runMain cozy.Cozy ")

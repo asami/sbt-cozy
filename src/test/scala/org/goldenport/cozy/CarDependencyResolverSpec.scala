@@ -13,7 +13,8 @@ import sbt._
 
 /*
  * @since   Jul. 12, 2026
- * @version Aug. 22, 2026
+ *  version Aug. 22, 2026
+ * @version Sep. 28, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -223,7 +224,10 @@ final class CarDependencyResolverSpec extends AnyWordSpec with Matchers with Giv
             firstbytes shouldBe "local-snapshot".getBytes("UTF-8").toVector
             lateraccesses.get() shouldBe 0
 
+            Given("the source repository is unavailable for a cache-only retry")
             IO.delete(directory / "repository")
+
+            When("the SNAPSHOT dependency is resolved again from the cache")
             val second = CarDependencyResolver.resolve(
               dependency,
               Seq(localrepository, laterrepository),

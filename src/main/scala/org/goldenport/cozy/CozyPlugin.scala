@@ -21,7 +21,7 @@ import scala.sys.process._
  *  version May. 26, 2026
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
- * @version Sep. 17, 2026
+ * @version Sep. 28, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -118,10 +118,6 @@ private[cozy] object CozyGenerationVersionContract {
       flatMap(coordinate => _cncf_version(coordinate).map(coordinate -> _))
     val cncfversions = cncfdependencies.map(_._2)
     val exactversionsrequired = _requires_exact_versions(projectMetadata)
-    if (exactversionsrequired && cozyversion.isEmpty)
-      sys.error(
-        "[sbt-cozy] CAR/SAR generation requires project.yaml build.cozyVersion."
-      )
     if (exactversionsrequired && cncfversions.isEmpty)
       sys.error(
         "[sbt-cozy] CAR/SAR generation requires exactly one project.yaml CNCF compile dependency."
@@ -166,10 +162,6 @@ private[cozy] object CozyGenerationVersionContract {
         )
       case (Some(expected), _) =>
         Some(expected)
-      case (None, _) if _requires_exact_versions(projectMetadata) =>
-        sys.error(
-          "[sbt-cozy] CAR/SAR delegated generation requires project.yaml build.cozyVersion."
-        )
       case (None, value) =>
         value
     }
@@ -178,22 +170,42 @@ private[cozy] object CozyGenerationVersionContract {
   def delegateCommand(
     projectMetadata: CozyProjectConfig,
     configuredVersion: Option[String],
-    configuredCommand: Seq[String]
+    configuredCommand: Seq[String],
+    legacyRoute: Option[String] = sys.env.get("SBT_COZY_LEGACY_DELEGATE_ROUTE")
   ): Seq[String] = {
     val command = configuredCommand.map(_.trim).filter(_.nonEmpty)
     val version = delegateVersion(projectMetadata, configuredVersion)
+    val route = CozySbtBridge.legacyRoute(legacyRoute)
     if (_requires_exact_versions(projectMetadata)) {
+      val cncfversion = projectVersions(projectMetadata)(CNCF_VERSION_KEY)
+      if (route == "sbt")
+        sys.error("[sbt-cozy] legacy sbt route is not permitted for CAR/SAR projects.")
       if (command.nonEmpty)
         sys.error(
           "[sbt-cozy] CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.command."
         )
-      CozySbtBridge.coursierCommand(version.getOrElse(
-        sys.error("[sbt-cozy] CAR/SAR delegated generation requires project.yaml build.cozyVersion.")
-      ))
+      version match {
+        case Some(exactversion) =>
+          if (route == "cs") CozySbtBridge.legacyCoursierCommand(exactversion)
+          else CozySbtBridge.launcherCommand(exactversion)
+        case None =>
+          if (route == "cs")
+            sys.error("[sbt-cozy] legacy cs route requires an exact Cozy version.")
+          CozySbtBridge.launcherCommandForCncf(cncfversion)
+      }
     } else {
-      command.headOption.map(_ => command).getOrElse(
-        version.map(CozySbtBridge.coursierCommand).getOrElse(Seq("cozy"))
-      )
+      if (route == "cs") {
+        if (command.nonEmpty)
+          sys.error("[sbt-cozy] legacy cs route conflicts with a custom delegate command.")
+        CozySbtBridge.legacyCoursierCommand(version.getOrElse(
+          sys.error("[sbt-cozy] legacy cs route requires an exact Cozy delegate version.")
+        ))
+      } else
+        command.headOption.map(_ => command).getOrElse(
+          version.map(CozySbtBridge.launcherCommand).
+            orElse(projectVersions(projectMetadata).get(CNCF_VERSION_KEY).map(CozySbtBridge.launcherCommandForCncf)).
+            getOrElse(Seq("cozy"))
+        )
     }
   }
 
@@ -203,10 +215,6 @@ private[cozy] object CozyGenerationVersionContract {
     environmentProjectDir: Option[File]
   ): Option[File] = {
     if (_requires_exact_versions(projectMetadata)) {
-      if (configuredProjectDir.nonEmpty)
-        sys.error(
-          "[sbt-cozy] CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.project_dir."
-        )
       if (environmentProjectDir.nonEmpty)
         sys.error(
           "[sbt-cozy] CAR/SAR delegated generation does not permit ambient SBT_COZY_PROJECT_DIR."
@@ -612,7 +620,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyTargetDir = settingKey[File]("Directory where Scala sources are generated")
     val cozyGeneratorBackend = settingKey[String]("Generator backend. Either 'cozy' or 'legacy'.")
     val cozyDelegateProjectDir = settingKey[Option[File]]("Optional path to cozy project used by delegated generation during development.")
-    val cozyDelegateCoursierVersion = settingKey[Option[String]]("Optional cozy version used to execute delegated generation through coursier during development.")
+    val cozyDelegateCoursierVersion = settingKey[Option[String]]("Optional exact Cozy version for delegated generation; retained under its legacy setting name.")
     val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation and packaging.")
     val cozyGenerationVersionOverrides = settingKey[Map[String, String]]("Explicit generation version overrides passed to Cozy bridge settings.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
@@ -813,11 +821,14 @@ object CozyPlugin extends AutoPlugin {
       val delegatecommand = cozyDelegateCommand.value
       val resolvedfiles = (Compile / update).value.allFiles
       val projectmetadata = cozyProjectMetadata.value
+      val configuredversion = cozyDelegateCoursierVersion.value.
+        map(CozyGenerationVersionContract.COZY_VERSION_KEY -> _).toMap
       val generationversions = CozyGenerationVersionContract.merge(
         projectmetadata,
-        cozyGenerationVersionOverrides.value
+        configuredversion ++ cozyGenerationVersionOverrides.value
       )
-      val skipunchanged = cozySkipUnchangedGeneration.value
+      val skipunchanged = cozySkipUnchangedGeneration.value &&
+        generationversions.contains(CozyGenerationVersionContract.COZY_VERSION_KEY)
       val log = streams.value.log
 
       CozyConfigValidator.validate(config) match {
@@ -3378,14 +3389,11 @@ private[cozy] object CozyManifestMetadata {
 }
 
 private[cozy] object CozySbtBridge {
-  private val _development_project_command = Seq(
-    "sbt",
-    "--batch",
-    "-Dsbt.server.autostart=false",
-    "-Dsbt.supershell=false"
+  private val _legacy_development_project_command = Seq(
+    "sbt", "--batch", "-Dsbt.server.autostart=false", "-Dsbt.supershell=false"
   )
 
-  private val _coursier_repositories = Seq(
+  private val _legacy_coursier_repositories = Seq(
     "--repository", "central",
     "--repository", "https://www.simplemodeling.org/repository/maven",
     "--repository", "https://raw.github.com/asami/maven-repository/2020/releases",
@@ -3393,15 +3401,29 @@ private[cozy] object CozySbtBridge {
     "--repository", "https://maven.pkg.github.com/asami/maven-repository"
   )
 
-  private val _coursier_channels = Seq(
+  private val _legacy_coursier_channels = Seq(
     "--channel", "https://www.simplemodeling.org/repository/cozy/coursier-channel.json"
   )
 
-  private[cozy] def coursierCommand(version: String): Seq[String] = {
+  private[cozy] def launcherCommand(version: String): Seq[String] =
+    Seq("cozy", "--runtime", version)
+
+  private[cozy] def launcherCommandForCncf(version: String): Seq[String] =
+    Seq("cozy", "--cozy-for-cncf", version)
+
+  private[cozy] def legacyCoursierCommand(version: String): Seq[String] = {
     val launcher = sys.env.getOrElse("SBT_COZY_COURSIER_COMMAND", "cs")
-    Seq(launcher, "launch") ++ _coursier_channels ++ _coursier_repositories ++
+    Seq(launcher, "launch") ++ _legacy_coursier_channels ++ _legacy_coursier_repositories ++
       Seq("cozy", "--", "--runtime", version)
   }
+
+  private[cozy] def legacyRoute(value: Option[String]): String =
+    value.map(_.trim.toLowerCase).filter(_.nonEmpty).getOrElse("launcher") match {
+      case "launcher" => "launcher"
+      case "cs" => "cs"
+      case "sbt" => "sbt"
+      case other => sys.error(s"[sbt-cozy] unsupported SBT_COZY_LEGACY_DELEGATE_ROUTE: $other")
+    }
 
   def resolveGenerate(
     basedir: File,
@@ -3960,9 +3982,10 @@ private[cozy] object CozySbtBridge {
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
     action: String,
-    arguments: Vector[String]
+    arguments: Vector[String],
+    legacyroute: Option[String] = None
   ): (File, Seq[String]) = {
-    val execution = _resolve(basedir, delegateprojectdir, delegatecommand, _request(action, arguments))
+    val execution = _resolve(basedir, delegateprojectdir, delegatecommand, _request(action, arguments), legacyroute)
     execution.cwd -> execution.command
   }
 
@@ -3970,27 +3993,38 @@ private[cozy] object CozySbtBridge {
     basedir: File,
     explicitprojectdir: Option[File],
     delegatecommand: Seq[String],
-    request: BridgeRequest
+    request: BridgeRequest,
+    legacyroute: Option[String] = sys.env.get("SBT_COZY_LEGACY_DELEGATE_ROUTE")
   ): DelegateExecution = {
     val requestfile = _write_request_file(request)
+    val route = legacyRoute(legacyroute)
     explicitprojectdir match {
       case Some(cozydir) =>
         if (!cozydir.isDirectory || !(cozydir / "build.sbt").isFile)
           sys.error(s"[sbt-cozy] cozyDelegateProjectDir is not a valid cozy project: ${cozydir.getAbsolutePath}")
-        val runmainargs = Vector(
-          "sbt-bridge",
-          "v1",
-          "--request",
-          requestfile.getAbsolutePath
-        ).map(_quote).mkString(" ")
-        DelegateExecution(cozydir, _development_project_command :+ s"runMain cozy.Cozy $runmainargs")
+        route match {
+          case "cs" => sys.error("[sbt-cozy] legacy cs route conflicts with cozyDelegateProjectDir.")
+          case "sbt" =>
+            val runmainargs = Vector("sbt-bridge", "v1", "--request", requestfile.getAbsolutePath).
+              map(_legacy_quote).mkString(" ")
+            DelegateExecution(cozydir, _legacy_development_project_command :+ s"runMain cozy.Cozy $runmainargs")
+          case _ =>
+            val prefix = if (delegatecommand.headOption.contains("cozy")) delegatecommand else Seq("cozy")
+            DelegateExecution(
+              basedir,
+              prefix ++ Seq("--runtime-dev-dir", cozydir.getAbsolutePath,
+                "sbt-bridge", "v1", "--request", requestfile.getAbsolutePath)
+            )
+        }
       case None =>
+        if (route == "sbt")
+          sys.error("[sbt-cozy] legacy sbt route requires cozyDelegateProjectDir.")
         val commandprefix = if (delegatecommand.nonEmpty) delegatecommand else Seq("cozy")
         DelegateExecution(basedir, commandprefix ++ Seq("sbt-bridge", "v1", "--request", requestfile.getAbsolutePath))
     }
   }
 
-  private def _quote(s: String): String =
+  private def _legacy_quote(s: String): String =
     "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
   private def _request(action: String, arguments: Vector[String]): BridgeRequest =

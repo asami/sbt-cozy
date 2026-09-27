@@ -40,7 +40,7 @@ inputs and deliberately excludes mutable compiled class bytes.
 - `cozySourceDir`: input directory (`src/main/cozy` by default)
 - `cozyTargetDir`: generation target (`Compile / sourceManaged` by default)
 - `cozyGeneratorBackend`: generator backend (`cozy` or `legacy`, default: `cozy`)
-- `cozyDelegateProjectDir`: optional path to the delegated `cozy` project during development
+- `cozyDelegateProjectDir`: optional project-selected development checkout passed to `cozy --runtime-dev-dir`, including CAR/SAR projects
 - `cozyDelegateCommand`: command prefix used for delegated generation and packaging (default: `Seq("cozy")`)
 - `cozySkipUnchangedGeneration`: skips regeneration when CML timestamps and generator settings are unchanged (default: `true`)
 - `cozyGenerate`: generation task
@@ -52,6 +52,16 @@ inputs and deliberately excludes mutable compiled class bytes.
 - `packagePrefix`: prefix added to the CML `package` declaration (default: `None`)
 
 `cozyConfig` is only used by the `legacy` backend. The `cozy` backend follows the generator behavior defined on the `cozy` side.
+
+An archive project's `project.yaml` normally needs only one exact CNCF compile
+dependency; the launcher selects the newest Cozy runtime proven for it. A
+non-archive project with one CNCF compile dependency uses the same default. To pin
+Cozy, set `build.cozyVersion` in `project.yaml`, or set
+`cozyDelegateCoursierVersion := Some("0.3.2.2")` in `build.sbt`. If both are
+present they must agree. For a project-local Cozy checkout, set
+`cozyDelegateProjectDir := Some(file("/path/to/cozy"))` in `build.sbt` or
+`generation.delegate.project_dir` in `.cozy/config.yaml`, then prepare its
+runtime classpath with `cozyExportRuntimeClasspath`.
 
 Use `cozyGenerationVersionOverrides` only when `build.sbt` must explicitly
 override Cozy generation dependency versions. Keys use the same full paths as
@@ -173,7 +183,7 @@ task selected by `cozyPackaging`. They are explicit opt-ins: `publish`,
 - `sbt-cozy` invokes `cozy sbt-bridge v1 --request=...`
 - `sbt-cozy` does not call `modeler-scala` / `package-car` / `package-sar` directly
 - the bridge request is the stable integration contract
-- when `cozyDelegateProjectDir` is set, `sbt-cozy` runs `runMain cozy.Cozy` in that repo instead of the installed `cozy` command
+- when `cozyDelegateProjectDir` is set for a non-CAR/SAR project, `sbt-cozy` passes that checkout to the `cozy` launcher with `--runtime-dev-dir`
 
 `legacy` backend:
 
@@ -367,10 +377,17 @@ cozyManifestMetadata ++= Map(
 Recommended usage:
 
 - normal use: install/update the `cozy` launcher command and let `sbt-cozy` call it directly
-- development against an in-progress `cozy` repo: set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))`
-- development against a published local SNAPSHOT: run `sbt publishLocal` in `cozy`, then set `cozyDelegateCoursierVersion := Some("0.2.17-SNAPSHOT")` or `SBT_COZY_COURSIER_VERSION=0.2.17-SNAPSHOT`
+- development against an in-progress `cozy` repo: configure `development.runtime.dev-dir` in the Cozy launcher, or set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))` for this project
+- development against a published local SNAPSHOT: run `sbt publishLocal` in `cozy`; the launcher resolves the version passed from `project.yaml` or the legacy `cozyDelegateCoursierVersion` setting
 
-The default bridge route always launches the shell command `cozy` and passes the `sbt-bridge` subcommand to it. The coursier route is a development route that launches the `cozy` launcher app from the Cozy Coursier channel and passes the explicit Cozy runtime version with `--runtime`.
+By default, all built-in bridge routes invoke the `cozy` launcher command and pass the `sbt-bridge` subcommand. CAR/SAR projects pass their exact CNCF compile version with `--cozy-for-cncf`; the launcher selects the newest cataloged proven Cozy version for it. `project.yaml build.cozyVersion` or `cozyDelegateCoursierVersion := Some("<version>")` instead passes an exact `--runtime` override. A project-selected development checkout passes `--runtime-dev-dir` and requires a prepared, current classpath. A configured launcher development checkout can satisfy an exact SNAPSHOT version only when its version matches. `SBT_COZY_COURSIER_VERSION` remains a legacy compatibility override. When the Cozy version is catalog-selected, incremental generation is not skipped on the basis of a stale versionless state file.
+
+The previous launch routes remain explicit legacy opt-ins through `SBT_COZY_LEGACY_DELEGATE_ROUTE`:
+
+- `cs`: use `cs launch` with the exact Cozy version. `SBT_COZY_COURSIER_COMMAND` selects the Coursier executable and also remains in use for CAR dependency classpath resolution.
+- `sbt`: run `cozy.Cozy` from `cozyDelegateProjectDir` with `sbt runMain`; this is available only for non-CAR/SAR projects with that checkout configured.
+
+Unset the variable (or set it to `launcher`) for normal operation. An unknown route, a `cs` route without an exact version, and an `sbt` route without a checkout fail explicitly. The direct SBT route can start a second SBT process and must not be used inside an already serialized SBT execution; it is retained solely for legacy recovery.
 
 Bridge governance:
 
