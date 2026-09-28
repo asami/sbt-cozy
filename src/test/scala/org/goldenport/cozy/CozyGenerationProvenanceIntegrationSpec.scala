@@ -9,11 +9,10 @@ import org.scalatest.GivenWhenThen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import sbt._
-import scala.sys.process._
 
 /*
  * @since   Jul. 28, 2026
- * @version Jul. 28, 2026
+ * @version Sep. 28, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyGenerationProvenanceIntegrationSpec
@@ -81,10 +80,10 @@ final class CozyGenerationProvenanceIntegrationSpec
         )
         val targetbasedir = projectroot.resolve("target").toFile
         val targetdir =
-          (targetbasedir / "scala-2.12" / "src_managed" / "main")
-        val archive = projectroot.resolve(s"target/sample-$componentversion.car")
+          (targetbasedir / "scala-3.3.8" / "src_managed" / "main")
+        val archive = projectroot.resolve(s"target/example-sample-$componentversion.car")
 
-        When("sbt-cozy runs generation, the authoritative validator, and CAR packaging through actual Cozy")
+        When("sbt-cozy runs generation and CAR packaging through actual Cozy")
         val generated = CozyDelegatedGenerator.generate(
           sourcedir = source.getParent.toFile,
           cozyfiles = Seq(source.toFile),
@@ -94,33 +93,19 @@ final class CozyGenerationProvenanceIntegrationSpec
           delegateprojectdir = None,
           delegatecommand = delegatecommand,
           settings = Map(
+            "generation.target" -> "cncf",
             "generation.versions.cncf" -> cncfversion,
+            "generation.versions.cozy" -> cozyversion,
             "runtime.cncf.descriptor" -> descriptor.toString,
             "runtime.cncf.descriptor.sha256" -> descriptordigest
+          ) ++ CarPublicationCoordinate._generation_settings(
+            CozyProjectConfig.load(projectroot.resolve("project.yaml").toFile),
+            "3"
           ),
           log = sbt.util.Logger.Null
         )
         val provenance =
           projectroot.resolve("target/cozy/generation-provenance.json")
-        val validationexit = Process(
-          delegatecommand ++ Seq(
-            "generation-provenance-validate",
-            source.toString,
-            "--save",
-            projectroot.toString,
-            "--cncf-version",
-            cncfversion,
-            "--cncf-runtime-descriptor-sha256",
-            descriptordigest,
-            "--cozy-generator-version",
-            cozyversion,
-            "--generation-source-identity",
-            sourceidentity,
-            "--generation-source-sha256",
-            _sha256(source)
-          ),
-          projectroot.toFile
-        ).!
         CozySbtBridge.packageCar(
           archive = archive.toFile,
           mainjar = mainjar.toFile,
@@ -131,9 +116,9 @@ final class CozyGenerationProvenanceIntegrationSpec
           abimanifestoutput =
             projectroot.resolve("target/cozy/abi-manifest.json").toFile,
           projectdir = projectroot.toFile,
-          name = "sample",
+          name = "example-sample",
           version = componentversion,
-          component = "sample",
+          component = "Sample",
           extensions = Map.empty,
           config = Map.empty,
           basedir = projectroot.toFile,
@@ -142,11 +127,12 @@ final class CozyGenerationProvenanceIntegrationSpec
           log = sbt.util.Logger.Null
         )
 
-        Then("the installed evidence is valid and the CAR preserves its exact bytes")
+        Then("packageCar validates aggregate V2 provenance before writing the archive")
         generated should not be empty
         generated.foreach(_.isFile shouldBe true)
-        validationexit shouldBe 0
         Files.isRegularFile(provenance) shouldBe true
+        Files.readString(provenance, StandardCharsets.UTF_8) should include regex
+          """"schemaVersion"\s*:\s*"cozy\.generation-provenance\.v2""".r
         Files.exists(projectroot.resolve("target/sbt-cozy/delegate-work")) shouldBe false
         _zip_text(archive, "generation-provenance.json") shouldBe
           Files.readString(provenance, StandardCharsets.UTF_8)
@@ -170,15 +156,13 @@ final class CozyGenerationProvenanceIntegrationSpec
     componentversion: String
   ): String =
     s"""project:
-       |  name: sample
+       |  namespace: com.example
+       |  id: Sample
        |  kind: car
-       |  organization: com.example
-       |  scalaPackage: domain
        |  component:
-       |    name: sample
-       |    className: domain.SampleComponent
        |    version: $componentversion
        |build:
+       |  scalaVersion: 3.3.8
        |  cozyVersion: $cozyversion
        |  dependencies:
        |    compile:
@@ -196,9 +180,10 @@ final class CozyGenerationProvenanceIntegrationSpec
 
   private def _abi_manifest(componentversion: String): String =
     s"""{
-       |  "format": "cozy.car.abi-manifest.v1",
-       |  "car": {
-       |    "name": "sample",
+       |  "format": "cozy.car.abi-manifest.v2",
+       |  "component": {
+       |    "namespace": "com.example",
+       |    "id": "Sample",
        |    "version": "$componentversion"
        |  },
        |  "abi": {
@@ -206,7 +191,8 @@ final class CozyGenerationProvenanceIntegrationSpec
        |    "exports": {
        |      "components": [
        |        {
-       |          "name": "sample"
+       |          "namespace": "com.example",
+       |          "id": "Sample"
        |        }
        |      ],
        |      "operations": [],

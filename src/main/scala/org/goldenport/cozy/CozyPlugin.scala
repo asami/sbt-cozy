@@ -110,14 +110,41 @@ object CozyProjectConfig {
 private[cozy] object CozyGenerationVersionContract {
   val CNCF_VERSION_KEY = "generation.versions.cncf"
   val COZY_VERSION_KEY = "generation.versions.cozy"
+  val TARGET_KEY = "generation.target"
 
-  def projectVersions(projectMetadata: CozyProjectConfig): Map[String, String] = {
+  def generationTarget(projectMetadata: CozyProjectConfig): String = {
+    val packaging = CozyPackagingPolicy.resolve(projectMetadata).packaging
+    val kind = projectMetadata.value("project.kind").map(_.trim.toLowerCase(java.util.Locale.ROOT))
+    if (kind.contains("library") && packaging == "maven") "library" else "cncf"
+  }
+
+  def requireGenerationTarget(projectMetadata: CozyProjectConfig, target: String): String = {
+    val normalized = target.trim.toLowerCase(java.util.Locale.ROOT)
+    normalized match {
+      case "library" =>
+        if (_requires_exact_versions(projectMetadata))
+          sys.error("[sbt-cozy] CAR/SAR projects cannot use cozyGenerationTarget := \"library\".")
+        normalized
+      case "cncf" => normalized
+      case other => sys.error(s"[sbt-cozy] unsupported cozyGenerationTarget '$other'. Expected 'cncf' or 'library'.")
+    }
+  }
+
+  def projectVersions(projectMetadata: CozyProjectConfig): Map[String, String] =
+    projectVersions(projectMetadata, generationTarget(projectMetadata))
+
+  def projectVersions(projectMetadata: CozyProjectConfig, generationTarget: String): Map[String, String] = {
+    val target = requireGenerationTarget(projectMetadata, generationTarget)
     val cozyversion = projectMetadata.value("build.cozyVersion")
     val cncfdependencies = projectMetadata.
       list("build.dependencies.compile").
       flatMap(coordinate => _cncf_version(coordinate).map(coordinate -> _))
     val cncfversions = cncfdependencies.map(_._2)
     val exactversionsrequired = _requires_exact_versions(projectMetadata)
+    if (target == "library" && cncfdependencies.nonEmpty)
+      sys.error(
+        s"""[sbt-cozy] library generation rejects project.yaml CNCF compile dependencies: ${cncfdependencies.map(_._1).sorted.mkString(", ")}. Use cozyGenerationTarget := "cncf"."""
+      )
     if (exactversionsrequired && cncfversions.isEmpty)
       sys.error(
         "[sbt-cozy] CAR/SAR generation requires exactly one project.yaml CNCF compile dependency."
@@ -133,8 +160,21 @@ private[cozy] object CozyGenerationVersionContract {
   def merge(
     projectMetadata: CozyProjectConfig,
     overrides: Map[String, String]
+  ): Map[String, String] =
+    merge(projectMetadata, overrides, generationTarget(projectMetadata))
+
+  def merge(
+    projectMetadata: CozyProjectConfig,
+    overrides: Map[String, String],
+    generationTarget: String
   ): Map[String, String] = {
-    val projectversions = projectVersions(projectMetadata)
+    val target = requireGenerationTarget(projectMetadata, generationTarget)
+    val projectversions = projectVersions(projectMetadata, target)
+    overrides.get(TARGET_KEY).map(_.trim).filter(_.nonEmpty).filter(_ != target).foreach { actual =>
+      sys.error(
+        s"[sbt-cozy] exact generation target sources disagree: project=$target owning-build-bridge=$actual"
+      )
+    }
     val conflicts = projectversions.toVector.flatMap {
       case (key, expected) =>
         overrides.get(key).
@@ -146,7 +186,19 @@ private[cozy] object CozyGenerationVersionContract {
       sys.error(
         s"[sbt-cozy] exact generation version sources disagree: ${conflicts.sorted.mkString(", ")}"
       )
-    overrides ++ projectversions
+    val merged = overrides ++ projectversions + (TARGET_KEY -> target)
+    if (target == "library") {
+      if (!merged.get(COZY_VERSION_KEY).exists(_.trim.nonEmpty))
+        sys.error("[sbt-cozy] library generation requires a nonempty generation.versions.cozy pin.")
+      Vector(
+        CNCF_VERSION_KEY,
+        "runtime.cncf.descriptor",
+        "runtime.cncf.descriptor.sha256"
+      ).find(merged.contains).foreach { key =>
+        sys.error(s"""[sbt-cozy] library generation rejects supplied $key. Use cozyGenerationTarget := "cncf".""")
+      }
+    }
+    merged
   }
 
   def delegateVersion(
@@ -171,13 +223,18 @@ private[cozy] object CozyGenerationVersionContract {
     projectMetadata: CozyProjectConfig,
     configuredVersion: Option[String],
     configuredCommand: Seq[String],
-    legacyRoute: Option[String] = sys.env.get("SBT_COZY_LEGACY_DELEGATE_ROUTE")
+    legacyRoute: Option[String] = sys.env.get("SBT_COZY_LEGACY_DELEGATE_ROUTE"),
+    generationTarget: Option[String] = None
   ): Seq[String] = {
     val command = configuredCommand.map(_.trim).filter(_.nonEmpty)
     val version = delegateVersion(projectMetadata, configuredVersion)
     val route = CozySbtBridge.legacyRoute(legacyRoute)
+    val target = requireGenerationTarget(
+      projectMetadata,
+      generationTarget.getOrElse(CozyGenerationVersionContract.generationTarget(projectMetadata))
+    )
     if (_requires_exact_versions(projectMetadata)) {
-      val cncfversion = projectVersions(projectMetadata)(CNCF_VERSION_KEY)
+      val cncfversion = projectVersions(projectMetadata, target)(CNCF_VERSION_KEY)
       if (route == "sbt")
         sys.error("[sbt-cozy] legacy sbt route is not permitted for CAR/SAR projects.")
       if (command.nonEmpty)
@@ -203,7 +260,7 @@ private[cozy] object CozyGenerationVersionContract {
       } else
         command.headOption.map(_ => command).getOrElse(
           version.map(CozySbtBridge.launcherCommand).
-            orElse(projectVersions(projectMetadata).get(CNCF_VERSION_KEY).map(CozySbtBridge.launcherCommandForCncf)).
+            orElse(projectVersions(projectMetadata, target).get(CNCF_VERSION_KEY).map(CozySbtBridge.launcherCommandForCncf)).
             getOrElse(Seq("cozy"))
         )
     }
@@ -623,6 +680,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyDelegateCoursierVersion = settingKey[Option[String]]("Optional exact Cozy version for delegated generation; retained under its legacy setting name.")
     val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation and packaging.")
     val cozyGenerationVersionOverrides = settingKey[Map[String, String]]("Explicit generation version overrides passed to Cozy bridge settings.")
+    val cozyGenerationTarget = settingKey[String]("Generation target: 'cncf' for component output or 'library' for pure model output.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
@@ -733,9 +791,11 @@ object CozyPlugin extends AutoPlugin {
     cozyDelegateCommand := CozyGenerationVersionContract.delegateCommand(
       cozyProjectMetadata.value,
       cozyDelegateCoursierVersion.value,
-      cozyProjectConfig.value.list("generation.delegate.command")
+      cozyProjectConfig.value.list("generation.delegate.command"),
+      generationTarget = Some(cozyGenerationTarget.value)
     ),
     cozyGenerationVersionOverrides := Map.empty,
+    cozyGenerationTarget := CozyGenerationVersionContract.generationTarget(cozyProjectMetadata.value),
     cozySkipUnchangedGeneration := cozyProjectConfig.value.boolean("generation.skip_unchanged").getOrElse(true),
     cozyWebDescriptorSync := cozyProjectConfig.value.boolean("generation.web_descriptor_sync").getOrElse(true),
 
@@ -821,11 +881,16 @@ object CozyPlugin extends AutoPlugin {
       val delegatecommand = cozyDelegateCommand.value
       val resolvedfiles = (Compile / update).value.allFiles
       val projectmetadata = cozyProjectMetadata.value
+      val generationtarget = CozyGenerationVersionContract.requireGenerationTarget(
+        projectmetadata,
+        cozyGenerationTarget.value
+      )
       val configuredversion = cozyDelegateCoursierVersion.value.
         map(CozyGenerationVersionContract.COZY_VERSION_KEY -> _).toMap
       val generationversions = CozyGenerationVersionContract.merge(
         projectmetadata,
-        configuredversion ++ cozyGenerationVersionOverrides.value
+        configuredversion ++ cozyGenerationVersionOverrides.value,
+        generationtarget
       )
       val skipunchanged = cozySkipUnchangedGeneration.value &&
         generationversions.contains(CozyGenerationVersionContract.COZY_VERSION_KEY)
@@ -842,7 +907,7 @@ object CozyPlugin extends AutoPlugin {
         Seq.empty
       } else {
         val runtimesettings =
-          if (backend == "cozy") {
+          if (backend == "cozy" && generationtarget == "cncf") {
             val descriptor = CozyCncfRuntimeDescriptor.extractRequired(
               resolvedfiles,
               target.value / "sbt-cozy" / "cncf-runtime.yaml"
@@ -871,7 +936,7 @@ object CozyPlugin extends AutoPlugin {
           backend != "cozy" ||
             (
               CozyDelegatedGenerator.hasModelMetadata(target.value, cozyfiles.size) &&
-                CozyDelegatedGenerator.hasGenerationProvenance(target.value)
+                (generationtarget == "library" || CozyDelegatedGenerator.hasGenerationProvenance(target.value))
             )
 
         if (skipunchanged && sideoutputsavailable && CozyGenerationState.isUpToDate(statefile, currentinputs, currentoutputs)) {
@@ -3433,10 +3498,11 @@ private[cozy] object CozySbtBridge {
     savedir: File,
     settings: Map[String, String] = Map.empty
   ): DelegateExecution = {
+    val command = _generation_command(settings)
     val request = _request(
       action = "generate",
       arguments = Vector(
-        "modeler-scala",
+        command,
         source.getAbsolutePath,
         "--save",
         savedir.getAbsolutePath
@@ -4029,6 +4095,13 @@ private[cozy] object CozySbtBridge {
 
   private def _request(action: String, arguments: Vector[String]): BridgeRequest =
     BridgeRequest(action, arguments)
+
+  private def _generation_command(settings: Map[String, String]): String =
+    settings.get(CozyGenerationVersionContract.TARGET_KEY).
+      map(_.trim.toLowerCase(java.util.Locale.ROOT)) match {
+        case Some("library") => "modeler-scala-value"
+        case _ => "modeler-scala"
+      }
 
   private def _project_settings(basedir: File, settings: Map[String, String]): Map[String, String] =
     settings + ("sbt.project_dir" -> basedir.getAbsoluteFile.toPath.normalize.toString)

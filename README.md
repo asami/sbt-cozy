@@ -42,6 +42,7 @@ inputs and deliberately excludes mutable compiled class bytes.
 - `cozyGeneratorBackend`: generator backend (`cozy` or `legacy`, default: `cozy`)
 - `cozyDelegateProjectDir`: optional project-selected development checkout passed to `cozy --runtime-dev-dir`, including CAR/SAR projects
 - `cozyDelegateCommand`: command prefix used for delegated generation and packaging (default: `Seq("cozy")`)
+- `cozyGenerationTarget`: `library` for pure value, datatype, powertype, and plain state-machine output; `cncf` for component runtime output
 - `cozySkipUnchangedGeneration`: skips regeneration when CML timestamps and generator settings are unchanged (default: `true`)
 - `cozyGenerate`: generation task
 
@@ -380,7 +381,7 @@ Recommended usage:
 - development against an in-progress `cozy` repo: configure `development.runtime.dev-dir` in the Cozy launcher, or set `cozyDelegateProjectDir := Some(file("/path/to/cozy"))` for this project
 - development against a published local SNAPSHOT: run `sbt publishLocal` in `cozy`; the launcher resolves the version passed from `project.yaml` or the legacy `cozyDelegateCoursierVersion` setting
 
-By default, all built-in bridge routes invoke the `cozy` launcher command and pass the `sbt-bridge` subcommand. CAR/SAR projects pass their exact CNCF compile version with `--cozy-for-cncf`; the launcher selects the newest cataloged proven Cozy version for it. `project.yaml build.cozyVersion` or `cozyDelegateCoursierVersion := Some("<version>")` instead passes an exact `--runtime` override. A project-selected development checkout passes `--runtime-dev-dir` and requires a prepared, current classpath. A configured launcher development checkout can satisfy an exact SNAPSHOT version only when its version matches. `SBT_COZY_COURSIER_VERSION` remains a legacy compatibility override. When the Cozy version is catalog-selected, incremental generation is not skipped on the basis of a stale versionless state file.
+By default, Maven library projects use `cozyGenerationTarget := "library"`; the bridge invokes `modeler-scala-value` with the project-pinned Cozy version and does not resolve a CNCF descriptor. CAR/SAR and other projects default to `cncf`; their bridge routes retain the exact CNCF descriptor and provenance contract. CAR/SAR projects cannot opt into the library target. `project.yaml build.cozyVersion` or `cozyDelegateCoursierVersion := Some("<version>")` passes an exact `--runtime` override. A project-selected development checkout passes `--runtime-dev-dir` and requires a prepared, current classpath.
 
 The previous launch routes remain explicit legacy opt-ins through `SBT_COZY_LEGACY_DELEGATE_ROUTE`:
 

@@ -285,18 +285,96 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
         delegate shouldBe Seq("custom-cozy", "generate")
       }
 
-      "select a compatible Cozy runtime for a non-CAR CNCF project" in {
-        Given("a library project with one CNCF compile dependency and no Cozy override")
+      "reject a CNCF dependency under the default library target" in {
+        Given("a Maven library project with one CNCF compile dependency")
         val metadata = CozyProjectConfig.parse(Seq(
-          "project:", "  kind: library", "build:", "  dependencies:", "    compile:",
+          "project:", "  kind: library", "packaging:", "  kind: maven", "build:", "  dependencies:", "    compile:",
           "      - org.goldenport::goldenport-cncf:0.5.2"
         ))
 
-        When("the default delegate command is resolved")
-        val command = CozyGenerationVersionContract.delegateCommand(metadata, None, Seq.empty)
+        When("the default library generation versions are resolved")
+        val error = intercept[RuntimeException] {
+          CozyGenerationVersionContract.projectVersions(metadata)
+        }
 
-        Then("the same CNCF-based runtime selector reaches the launcher")
+        Then("the contradictory runtime declaration is rejected before delegation")
+        error.getMessage should include("library generation rejects project.yaml CNCF compile dependencies")
+      }
+
+      "select a compatible Cozy runtime for a Maven library explicitly targeted to CNCF" in {
+        Given("a Maven library project with one CNCF compile dependency")
+        val metadata = CozyProjectConfig.parse(Seq(
+          "project:", "  kind: library", "packaging:", "  kind: maven", "build:", "  dependencies:", "    compile:",
+          "      - org.goldenport::goldenport-cncf:0.5.2"
+        ))
+
+        When("the owning build explicitly selects the CNCF target")
+        val versions = CozyGenerationVersionContract.projectVersions(metadata, "cncf")
+        val command = CozyGenerationVersionContract.delegateCommand(
+          metadata,
+          None,
+          Seq.empty,
+          generationTarget = Some("cncf")
+        )
+
+        Then("the established CNCF runtime selector remains available")
+        versions should contain("generation.versions.cncf" -> "0.5.2")
         command shouldBe Seq("cozy", "--cozy-for-cncf", "0.5.2")
+      }
+
+      "default Maven libraries to pure generation while rejecting CAR/SAR library selection" in {
+        Given("library and CAR project metadata")
+        val library = CozyProjectConfig.parse(Seq(
+          "project:", "  kind: library", "packaging:", "  kind: maven",
+          "build:", "  cozyVersion: 0.3.3-SNAPSHOT"
+        ))
+        val car = CozyProjectConfig.parse(Seq(
+          "project:", "  kind: car", "packaging:", "  kind: car"
+        ))
+
+        When("sbt-cozy resolves and validates the public generation target")
+        val defaulttarget = CozyGenerationVersionContract.generationTarget(library)
+        val guard = intercept[RuntimeException] {
+          CozyGenerationVersionContract.requireGenerationTarget(car, "library")
+        }
+        val conflict = intercept[RuntimeException] {
+          CozyGenerationVersionContract.merge(
+            library,
+            Map("generation.target" -> "cncf"),
+            "library"
+          )
+        }
+
+        Then("library output is opt-in by project shape and archive projects retain CNCF")
+        defaulttarget shouldBe "library"
+        guard.getMessage should include("CAR/SAR projects cannot use cozyGenerationTarget")
+        conflict.getMessage should include("exact generation target sources disagree")
+      }
+
+      "require a Cozy pin and reject even empty CNCF runtime keys for library generation" in {
+        Given("a Maven library target")
+        val metadata = CozyProjectConfig.parse(Seq(
+          "project:", "  kind: library", "packaging:", "  kind: maven"
+        ))
+
+        When("the owning-build generation settings omit its Cozy pin or supply an empty runtime key")
+        val missingpin = intercept[RuntimeException] {
+          CozyGenerationVersionContract.merge(metadata, Map.empty, "library")
+        }
+        val emptydescriptor = intercept[RuntimeException] {
+          CozyGenerationVersionContract.merge(
+            metadata,
+            Map(
+              "generation.versions.cozy" -> "0.3.3-SNAPSHOT",
+              "runtime.cncf.descriptor" -> ""
+            ),
+            "library"
+          )
+        }
+
+        Then("both contradictory states fail before bridge or delegate invocation")
+        missingpin.getMessage should include("library generation requires a nonempty generation.versions.cozy pin")
+        emptydescriptor.getMessage should include("library generation rejects supplied runtime.cncf.descriptor")
       }
 
       "reject contradictory project and owning-build bridge versions" in {
@@ -817,6 +895,29 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
           json should include(""""generation.versions.cncf": "0.4.11"""")
           json should include(s""""sbt.project_dir": "${dir.getAbsoluteFile.toPath.normalize.toString}"""")
           json should not include "target/sbt-cozy-test/work/cozy-delegated-generator/wrong-project"
+        }
+      }
+
+      "select value generation and preserve the target in an actual bridge request" in {
+        Given("library settings with the explicit generation target")
+        _with_temp_dir("sbt-cozy-library-delegate") { dir =>
+          val source = _write(dir / "src" / "model.cml", "# VALUE\n\n## Label\n")
+          val savedir = dir / "out"
+
+          When("the delegated generator resolves its bridge request")
+          val execution = CozySbtBridge.resolveGenerate(
+            basedir = dir,
+            explicitProjectDir = None,
+            delegatecommand = Seq("cozy"),
+            source = source,
+            savedir = savedir,
+            settings = Map("generation.target" -> "library")
+          )
+          val json = IO.read(file(execution.command.last))
+
+          Then("the bridge dispatch is modeler-scala-value and retains generation.target")
+          json should include("modeler-scala-value")
+          json should include("\"generation.target\": \"library\"")
         }
       }
 
