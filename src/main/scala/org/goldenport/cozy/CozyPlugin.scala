@@ -903,6 +903,7 @@ object CozyPlugin extends AutoPlugin {
 
       val cozyfiles = CozyFileLoader.load(sourcedir)
       if (cozyfiles.isEmpty) {
+        CozyRuntimeAbiResources.clear(target.value)
         log.debug(s"[sbt-cozy] no cozy sources found under ${sourcedir.getAbsolutePath}")
         Seq.empty
       } else {
@@ -936,6 +937,7 @@ object CozyPlugin extends AutoPlugin {
           backend != "cozy" ||
             (
               CozyDelegatedGenerator.hasModelMetadata(target.value, cozyfiles.size) &&
+                CozyRuntimeAbiResources.isAvailable(target.value) &&
                 (generationtarget == "library" || CozyDelegatedGenerator.hasGenerationProvenance(target.value))
             )
 
@@ -964,6 +966,7 @@ object CozyPlugin extends AutoPlugin {
             CozyGenerationState.write(statefile, currentinputs)
             generated
           case "legacy" =>
+            CozyRuntimeAbiResources.clear(target.value)
             val model = _parse_validated_model(cozyfiles)
             val generated = CozyGenerator.generate(model, targetdir, config)
             log.info(s"[sbt-cozy] generated ${generated.size} Scala source(s) using legacy backend")
@@ -1702,7 +1705,11 @@ object CozyPlugin extends AutoPlugin {
       }
     }.value,
 
-    Compile / sourceGenerators += cozyGenerate.taskValue
+    Compile / sourceGenerators += cozyGenerate.taskValue,
+    Compile / resourceGenerators += Def.task {
+      cozyGenerate.value
+      CozyRuntimeAbiResources.project(target.value, (Compile / resourceManaged).value)
+    }.taskValue
   )
 
   private def _task_result[A](result: Result[A]): String = result match {
@@ -2561,7 +2568,7 @@ private[cozy] object CozyWebDescriptorSync {
 }
 
 private[cozy] object CozyGenerationState {
-  private val _state_version = "2"
+  private val _state_version = "3"
   private val _input_prefix = "input."
   private val _setting_prefix = "setting."
 
@@ -3106,6 +3113,7 @@ private[cozy] object CozyDelegatedGenerator {
 
     installComponentApiDescriptor(workdir, targetbasedir)
     installModelMetadata(workdir, targetbasedir)
+    CozyRuntimeAbiResources.install(workdir, targetbasedir)
     installGenerationProvenance(
       workdir = workdir,
       targetbasedir = targetbasedir,
@@ -3273,16 +3281,35 @@ private[cozy] object CozyDelegatedGenerator {
 
     generatedsources.map { generated =>
       val relative = _relative_from_generated_root(generated, _source_marker).getOrElse(generated.getName)
-      val destination = targetdir / _normalize_path(relative)
-      _relative_from_generated_root(generated, _legacy_source_marker).
-        map(relative => targetdir / _normalize_path(relative)).
-        filter(_.getAbsolutePath != destination.getAbsolutePath).
-        filter(_.isFile).
-        foreach(IO.delete)
-      IO.createDirectory(destination.getParentFile)
-      IO.write(destination, IO.read(generated))
-      destination
+      installGeneratedSource(generated, targetdir, relative,
+        _relative_from_generated_root(generated, _legacy_source_marker))
     }
+  }
+
+  private[cozy] def generatedDestination(targetdir: File, relative: String): File = {
+    val normalized = _normalize_path(relative)
+    // The configured managed root may already include the legacy Scala root.
+    // Preserve canonical main-root layout otherwise (including library output).
+    val path = if (targetdir.getName == "scala") normalized.stripPrefix("scala/") else normalized
+    targetdir / path
+  }
+
+  private[cozy] def installGeneratedSource(generated: File, targetdir: File,
+    relative: String, legacyRelative: Option[String]
+  ): File = {
+    val destination = generatedDestination(targetdir, relative)
+    val obsolete = (Vector(targetdir / _normalize_path(relative)) ++
+      legacyRelative.map(path => targetdir / _normalize_path(path)).toVector).
+      distinct.filter(file => file != destination && file.isFile)
+    val bytes = IO.readBytes(generated)
+    obsolete.foreach { file =>
+      if (!java.util.Arrays.equals(IO.readBytes(file), bytes))
+        sys.error(s"[sbt-cozy] obsolete generated source differs from producer output; preserve and reconcile: $file")
+    }
+    obsolete.foreach(IO.delete(_))
+    IO.createDirectory(destination.getParentFile)
+    IO.copyFile(generated, destination, preserveLastModified = true)
+    destination
   }
 
   private[cozy] def delegateFailureMessage(
