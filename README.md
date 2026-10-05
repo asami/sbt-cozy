@@ -43,6 +43,7 @@ inputs and deliberately excludes mutable compiled class bytes.
 - `cozyDelegateProjectDir`: optional project-selected development checkout passed to `cozy --runtime-dev-dir`, including CAR/SAR projects
 - `cozyDelegateCommand`: command prefix used for delegated generation and packaging (default: `Seq("cozy")`)
 - `cozyGenerationTarget`: `library` for pure value, datatype, powertype, and plain state-machine output; `cncf` for component runtime output
+- `cozyCncfRuntimeDescriptorInput`: task returning an optional prepared CNCF runtime descriptor `File` (default: `None`); evaluated by generation only for the `cozy` backend, `cncf` target and nonempty CML sources
 - `cozySkipUnchangedGeneration`: skips regeneration when CML timestamps and generator settings are unchanged (default: `true`)
 - `cozyGenerate`: generation task
 
@@ -73,6 +74,45 @@ cozyGenerationVersionOverrides ++= Map(
   "generation.versions.cncf" -> "0.4.11"
 )
 ```
+
+For source development, a build can select a prepared runtime descriptor instead
+of the descriptor in resolved dependency JARs. When the descriptor needs
+preparation, make `cozyCncfRuntimeDescriptorInput` depend on the build-owned
+preparation task through `.value`. The preparation task must finish writing the
+current descriptor before it returns its `File`. For example, in a build that
+provides `prepareCncfRuntimeDescriptor: TaskKey[File]`:
+
+```scala
+cozyGeneratorBackend := "cozy"
+cozyGenerationTarget := "cncf"
+cozyCncfRuntimeDescriptorInput := Some(prepareCncfRuntimeDescriptor.value)
+```
+
+An already prepared file can be selected directly:
+
+```scala
+cozyCncfRuntimeDescriptorInput := Some(file("target/cncf-source/runtime.yaml"))
+```
+
+The explicit file takes precedence over descriptor-bearing dependency JARs.
+It must be a regular file without a symbolic link at the selected path; a
+missing file, directory or symbolic link fails with an error naming that input,
+even when a usable dependency JAR is available. sbt-cozy reads the exact bytes
+and stages them at `target/sbt-cozy/cncf-runtime.yaml`, retaining the existing
+SHA-256 artifact provenance contract and output caching. With the default
+`None`, generation requires exactly one `META-INF/cncf/runtime.yaml` from
+resolved dependency JARs and retains the missing/multiple-descriptor errors.
+Generation evaluates this input and its preparation dependencies only when the
+normalized backend is `cozy`, the validated target is `cncf` and CML sources
+are nonempty. Library generation, legacy generation and an empty source set
+skip preparation. Generator target/version admission remains unchanged.
+
+The producer specifications in `CozyCncfRuntimeDescriptorSpec` establish the
+descriptor transport contract; `CozyCncfRuntimeDescriptorTaskSpec` evaluates the
+production selection task in the SBT task engine to specify preparation
+activation, skipping and failure propagation. Passing them does not establish source
+integration in both Control Center and Supervisor consumers (CC4-S1), or full
+Phase 4 acceptance for embedded and external Supervisor placement.
 
 When `cozySkipUnchangedGeneration := true`, `sbt-cozy` stores the relative CML paths, timestamps, backend, and generation settings in `target/sbt-cozy/generation-state.properties`. If nothing has changed, existing generated Scala sources are reused.
 

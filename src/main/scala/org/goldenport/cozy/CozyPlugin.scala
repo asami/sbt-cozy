@@ -21,7 +21,8 @@ import scala.sys.process._
  *  version May. 26, 2026
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
- * @version Sep. 28, 2026
+ *  version Sep. 28, 2026
+ * @version Oct. 5, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -395,6 +396,20 @@ private[cozy] object CozyCncfRuntimeDescriptor {
       sys.error(s"[sbt-cozy] CNCF runtime descriptor is unavailable in resolved dependencies: ${_entry_path}")
     }
 
+  def extractRequired(jars: Seq[File], target: File, sourceDescriptor: Option[File]): Extracted =
+    sourceDescriptor match {
+      case None => extractRequired(jars, target)
+      case Some(source) =>
+        if (!Files.isRegularFile(source.toPath, LinkOption.NOFOLLOW_LINKS))
+          sys.error(
+            s"[sbt-cozy] explicit CNCF runtime descriptor input is not a regular file (symbolic links are not allowed): ${source.getAbsolutePath}"
+          )
+        val bytes = Files.readAllBytes(source.toPath)
+        IO.createDirectory(target.getParentFile)
+        IO.write(target, bytes)
+        Extracted(target, _sha256(bytes))
+    }
+
   def extract(jars: Seq[File], target: File): Option[Extracted] = {
     val candidates = jars.filter(file => file.isFile && file.getName.endsWith(".jar")).flatMap { jar =>
       val zip = new ZipFile(jar)
@@ -681,6 +696,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyDelegateCommand = settingKey[Seq[String]]("Command prefix used to execute delegated cozy generation and packaging.")
     val cozyGenerationVersionOverrides = settingKey[Map[String, String]]("Explicit generation version overrides passed to Cozy bridge settings.")
     val cozyGenerationTarget = settingKey[String]("Generation target: 'cncf' for component output or 'library' for pure model output.")
+    val cozyCncfRuntimeDescriptorInput = taskKey[Option[File]]("Optional prepared CNCF runtime descriptor source file for cozy backend CNCF generation; otherwise use resolved dependency jars.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
@@ -765,6 +781,9 @@ object CozyPlugin extends AutoPlugin {
 
   import autoImport._
 
+  private[cozy] val _cncf_runtime_descriptor_selection =
+    TaskKey[Option[File]]("cozyCncfRuntimeDescriptorSelection", "Select CNCF runtime descriptor preparation for nonempty cozy component sources.")
+
   override def requires: Plugins = plugins.JvmPlugin
   override def trigger: PluginTrigger = noTrigger
 
@@ -796,6 +815,21 @@ object CozyPlugin extends AutoPlugin {
     ),
     cozyGenerationVersionOverrides := Map.empty,
     cozyGenerationTarget := CozyGenerationVersionContract.generationTarget(cozyProjectMetadata.value),
+    cozyCncfRuntimeDescriptorInput := None,
+    _cncf_runtime_descriptor_selection := Def.taskDyn {
+      val sourcedir = cozySourceDir.value
+      val backend = cozyGeneratorBackend.value.trim.toLowerCase
+      val projectmetadata = cozyProjectMetadata.value
+      val generationtarget = CozyGenerationVersionContract.requireGenerationTarget(
+        projectmetadata,
+        cozyGenerationTarget.value
+      )
+      val cozyfiles = CozyFileLoader.load(sourcedir)
+      if (backend == "cozy" && generationtarget == "cncf" && cozyfiles.nonEmpty)
+        Def.task { cozyCncfRuntimeDescriptorInput.value }
+      else
+        Def.task { Option.empty[File] }
+    }.value,
     cozySkipUnchangedGeneration := cozyProjectConfig.value.boolean("generation.skip_unchanged").getOrElse(true),
     cozyWebDescriptorSync := cozyProjectConfig.value.boolean("generation.web_descriptor_sync").getOrElse(true),
 
@@ -910,7 +944,8 @@ object CozyPlugin extends AutoPlugin {
           if (backend == "cozy" && generationtarget == "cncf") {
             val descriptor = CozyCncfRuntimeDescriptor.extractRequired(
               resolvedfiles,
-              target.value / "sbt-cozy" / "cncf-runtime.yaml"
+              target.value / "sbt-cozy" / "cncf-runtime.yaml",
+              _cncf_runtime_descriptor_selection.value
             )
             Map(
               "runtime.cncf.descriptor" -> descriptor.path.getAbsolutePath,
