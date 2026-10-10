@@ -12,7 +12,7 @@ import org.scalatest.wordspec.AnyWordSpec
 
 /*
  * @since   Jul. 16, 2026
- * @version Jul. 16, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -30,8 +30,8 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
 
     "collect local Cozy evidence and submit only paired provider documents to CBD" in {
       Given("local Cozy evidence, sbt evidence, and a recording CBD submission transport")
-      val artifacts = SbtReviewEvidence.render(
-        SbtReviewEvidenceTarget(Some("org.example"), "fixture", "1.0.0", "sha256:" + ("a" * 64)),
+      val artifacts = SbtReviewEvidence.render("review-sbt-cozy-fixture",
+        SbtReviewEvidenceTarget(Some("org.example"), "fixture", "1.0.0"),
         "0.1.15-SNAPSHOT",
         Vector(SbtReviewTaskResult("task-result", "succeeded"))
       )
@@ -50,7 +50,7 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
 
     "refuse a CBD response without both canonical report and gate" in {
       Given("a paired submission transport with an incomplete response")
-      val artifacts = SbtReviewEvidence.render(SbtReviewEvidenceTarget(None, "fixture", "1.0.0", "sha256:" + ("a" * 64)), "0.1.15-SNAPSHOT", Vector(SbtReviewTaskResult("task-result", "succeeded")))
+      val artifacts = SbtReviewEvidence.render("review-sbt-cozy-fixture", SbtReviewEvidenceTarget(None, "fixture", "1.0.0"), "0.1.15-SNAPSHOT", Vector(SbtReviewTaskResult("task-result", "succeeded")))
 
       When("the transport omits the CBD gate")
       val response = SbtCarReviewClient.submit(new File("."), "{\"reviewId\":\"review-cozy-001\"}", "0.1.15-SNAPSHOT", artifacts, new RecordingCozyTransport(), new RecordingSubmissionTransport(SbtReviewCanonicalResponse("{\"report\":true}", "")))
@@ -63,7 +63,7 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       Given("a paired Review submission and a recording CBD wire endpoint")
       val endpoint = new RecordingWireEndpoint()
       val transport = new SbtCbdReviewWireTransport(endpoint)
-      val request = "{\"reviewId\":\"review-cozy-001\",\"target\":{\"kind\":\"project\",\"name\":\"fixture\",\"digest\":\"sha256:" + ("a" * 64) + "\"}}"
+      val request = "{\"reviewId\":\"review-cozy-001\",\"target\":{\"kind\":\"project\",\"name\":\"fixture\"}}"
       val paired = SbtReviewPairedSubmission("review-cozy-001", Vector(
         SbtReviewProviderDocuments("cozy", "{\"descriptor\":true}", request, "{\"bundle\":true}"),
         SbtReviewProviderDocuments("sbt-cozy", "{\"descriptor\":true}", request, "{\"bundle\":true}")
@@ -148,8 +148,8 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
 
     "derive Cozy's provider request from the same sbt target binding" in {
       Given("one sbt-cozy provider request")
-      val sbtrequest = SbtReviewEvidence.render(
-        SbtReviewEvidenceTarget(Some("org.example"), "fixture", "1.0.0", "sha256:" + ("a" * 64)),
+      val sbtrequest = SbtReviewEvidence.render("review-sbt-cozy-fixture",
+        SbtReviewEvidenceTarget(Some("org.example"), "fixture", "1.0.0"),
         "0.1.15-SNAPSHOT",
         Vector(SbtReviewTaskResult("task-result", "succeeded"))
       ).request
@@ -158,8 +158,8 @@ final class SbtCarReviewClientSpec extends AnyWordSpec with Matchers with GivenW
       val request = SbtCarReviewClient.cozyProviderRequest(sbtrequest).fold(error => fail(error), identity)
 
       Then("both providers receive the identical Review and target without workspace authority")
-      request should include("\"reviewId\":\"sbt-cozy-fixture-")
-      request should include("\"target\":{\"digest\":\"sha256:")
+      request should include("\"reviewId\":\"review-sbt-cozy-fixture\"")
+      request should include("\"target\":{\"kind\":\"project\",\"name\":\"fixture\"")
       request should include("\"cozy.car-analysis\"")
       request should not include "workspace"
     }

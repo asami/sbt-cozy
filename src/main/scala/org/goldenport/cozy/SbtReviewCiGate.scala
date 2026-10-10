@@ -8,7 +8,7 @@ import sbt.io.IO
 
 /*
  * @since   Jul. 23, 2026
- * @version Jul. 23, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 /** The bounded CI consumer of the CBD-owned Review artifact manifest. */
@@ -24,7 +24,7 @@ private[cozy] object SbtReviewCiGate {
     "html" -> "report.html",
     "sarif" -> "report.sarif"
   )
-  private val _manifest_fields = Set("schemaVersion", "documentType", "reviewId", "reportId", "reportDigest", "targetDigest", "attestationDigest", "profile", "limitations", "gate", "exitCode", "artifactDirectory", "retention", "artifacts")
+  private val _manifest_fields = Set("schemaVersion", "documentType", "reviewId", "reportId", "profile", "limitations", "gate", "exitCode", "artifactDirectory", "retention", "artifacts")
   private val _results = Set("pass", "fail", "unknown")
 
   def fromManifest(file: File): Either[String, SbtReviewCiGate] =
@@ -38,14 +38,12 @@ private[cozy] object SbtReviewCiGate {
       _ <- _string(fields("schemaVersion")).filter(_ == "textus.cbd.review-ci-artifact.v1").toRight("cbd-review-ci-manifest-schema-invalid")
       _ <- _string(fields("documentType")).filter(_ == "review-ci-artifact-manifest").toRight("cbd-review-ci-manifest-document-type-invalid")
       _ <- Vector("reviewId", "reportId", "profile").foldLeft[Either[String, Unit]](Right(())) { case (z, key) => z.flatMap(_ => _identifier(fields(key))) }
-      _ <- Vector("reportDigest", "targetDigest").foldLeft[Either[String, Unit]](Right(())) { case (z, key) => z.flatMap(_ => _digest(fields(key)).map(_ => ())) }
-      attestationdigest <- _digest(fields("attestationDigest"))
       _ <- _limitations(fields("limitations"))
       result <- _gate(fields("gate"))
       code <- fields("exitCode").asNumber.flatMap(_.toInt).toRight("cbd-review-ci-manifest-exit-code-invalid")
       expected <- exitCodeFor(result)
       _ <- Either.cond(code == expected, (), "cbd-review-ci-manifest-exit-code-mismatch")
-      _ <- _artifact_directory(fields("artifactDirectory"), attestationdigest)
+      _ <- _artifact_directory(fields("artifactDirectory"))
       _ <- _retention(fields("retention"))
       _ <- _artifacts(fields("artifacts"))
     } yield SbtReviewCiGate(result, code)
@@ -58,8 +56,8 @@ private[cozy] object SbtReviewCiGate {
       case _ => Left("cbd-review-ci-manifest-gate-invalid")
     }
 
-  private def _artifact_directory(value: Json, attestationdigest: String): Either[String, Unit] =
-    Either.cond(_string(value).contains(s"target/cbd-review/${attestationdigest.replace(':', '-')}"), (), "cbd-review-ci-manifest-artifact-directory-invalid")
+  private def _artifact_directory(value: Json): Either[String, Unit] =
+    Either.cond(_string(value).exists(_.matches("^target/cbd-review/[A-Za-z0-9][A-Za-z0-9._-]*$")), (), "cbd-review-ci-manifest-artifact-directory-invalid")
 
   private def _artifacts(value: Json): Either[String, Unit] =
     for {
@@ -71,13 +69,9 @@ private[cozy] object SbtReviewCiGate {
   private def _artifact(value: Json, path: String): Either[String, Unit] =
     for {
       fields <- _object(value, "cbd-review-ci-manifest-artifact-invalid")
-      _ <- Either.cond(fields.keySet == Set("path", "sha256"), (), "cbd-review-ci-manifest-artifact-invalid")
+      _ <- Either.cond(fields.keySet == Set("path"), (), "cbd-review-ci-manifest-artifact-invalid")
       _ <- Either.cond(_string(fields("path")).contains(path), (), "cbd-review-ci-manifest-artifact-path-invalid")
-      _ <- _digest(fields("sha256"))
     } yield ()
-
-  private def _digest(value: Json): Either[String, String] =
-    _string(value).filter(_.matches("sha256:[0-9a-f]{64}")).toRight("cbd-review-ci-manifest-digest-invalid")
 
   private def _gate(value: Json): Either[String, String] =
     for {

@@ -2,7 +2,6 @@ package org.goldenport.cozy
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
-import java.security.MessageDigest
 import java.util.Comparator
 import java.util.zip.{ZipEntry, ZipFile, ZipOutputStream}
 import org.scalatest.GivenWhenThen
@@ -12,7 +11,8 @@ import sbt._
 
 /*
  * @since   Jul. 28, 2026
- * @version Sep. 28, 2026
+ *  version Sep. 28, 2026
+ * @version Oct.  9, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyGenerationProvenanceIntegrationSpec
@@ -59,7 +59,6 @@ final class CozyGenerationProvenanceIntegrationSpec
           projectroot.resolve("target/runtime.yaml"),
           descriptorcontent
         )
-        val descriptordigest = _sha256(descriptor)
         _write(
           projectroot.resolve("project.yaml"),
           _project_yaml(cozyversion, cncfversion, componentversion)
@@ -96,8 +95,7 @@ final class CozyGenerationProvenanceIntegrationSpec
             "generation.target" -> "cncf",
             "generation.versions.cncf" -> cncfversion,
             "generation.versions.cozy" -> cozyversion,
-            "runtime.cncf.descriptor" -> descriptor.toString,
-            "runtime.cncf.descriptor.sha256" -> descriptordigest
+            "runtime.cncf.descriptor" -> descriptor.toString
           ) ++ CarPublicationCoordinate._generation_settings(
             CozyProjectConfig.load(projectroot.resolve("project.yaml").toFile),
             "3"
@@ -240,14 +238,10 @@ final class CozyGenerationProvenanceIntegrationSpec
     }
   }
 
-  private def _sha256(path: Path): String =
-    MessageDigest.getInstance("SHA-256").
-      digest(Files.readAllBytes(path)).
-      map(byte => f"${byte & 0xff}%02x").
-      mkString
-
   private def _with_temp_dir[A](prefix: String)(body: Path => A): A = {
-    val directory = Files.createTempDirectory(prefix)
+    val workroot = Path.of("target/cozy-generation-provenance-integration-spec/work").toAbsolutePath.normalize()
+    Files.createDirectories(workroot)
+    val directory = Files.createTempDirectory(workroot, prefix)
     try body(directory)
     finally {
       val stream = Files.walk(directory)

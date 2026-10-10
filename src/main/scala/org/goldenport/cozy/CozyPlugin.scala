@@ -3,7 +3,6 @@ package org.goldenport.cozy
 import java.time.Instant
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, LinkOption}
-import java.security.MessageDigest
 import java.util.zip.ZipFile
 import scala.collection.JavaConverters._
 
@@ -21,7 +20,8 @@ import scala.sys.process._
  *  version May. 26, 2026
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
- * @version Sep. 28, 2026
+ *  version Sep. 28, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -192,8 +192,7 @@ private[cozy] object CozyGenerationVersionContract {
         sys.error("[sbt-cozy] library generation requires a nonempty generation.versions.cozy pin.")
       Vector(
         CNCF_VERSION_KEY,
-        "runtime.cncf.descriptor",
-        "runtime.cncf.descriptor.sha256"
+        "runtime.cncf.descriptor"
       ).find(merged.contains).foreach { key =>
         sys.error(s"""[sbt-cozy] library generation rejects supplied $key. Use cozyGenerationTarget := "cncf".""")
       }
@@ -388,24 +387,32 @@ private[cozy] object CarPublicationCoordinate {
 private[cozy] object CozyCncfRuntimeDescriptor {
   private val _entry_path = "META-INF/cncf/runtime.yaml"
 
-  final case class Extracted(path: File, sha256: String)
-
-  def extractRequired(jars: Seq[File], target: File): Extracted =
-    extract(jars, target).getOrElse {
+  def extractRequired(classpath: Seq[File], target: File): File =
+    extract(classpath, target).getOrElse {
       sys.error(s"[sbt-cozy] CNCF runtime descriptor is unavailable in resolved dependencies: ${_entry_path}")
     }
 
-  def extract(jars: Seq[File], target: File): Option[Extracted] = {
-    val candidates = jars.filter(file => file.isFile && file.getName.endsWith(".jar")).flatMap { jar =>
-      val zip = new ZipFile(jar)
-      try {
-        Option(zip.getEntry(_entry_path)).map { entry =>
-          val stream = zip.getInputStream(entry)
-          try jar -> stream.readAllBytes()
-          finally stream.close()
+  def extract(classpath: Seq[File], target: File): Option[File] = {
+    val candidates = classpath.map(_.getAbsoluteFile.toPath.normalize().toFile).distinct.flatMap { owner =>
+      if (owner.isDirectory) {
+        val resource = new File(owner, _entry_path)
+        if (resource.isFile)
+          Some(owner -> java.nio.file.Files.readAllBytes(resource.toPath))
+        else
+          None
+      } else if (owner.isFile && owner.getName.endsWith(".jar")) {
+        val zip = new ZipFile(owner)
+        try {
+          Option(zip.getEntry(_entry_path)).map { entry =>
+            val stream = zip.getInputStream(entry)
+            try owner -> stream.readAllBytes()
+            finally stream.close()
+          }
+        } finally {
+          zip.close()
         }
-      } finally {
-        zip.close()
+      } else {
+        None
       }
     }
     candidates match {
@@ -413,29 +420,18 @@ private[cozy] object CozyCncfRuntimeDescriptor {
       case Seq((_, bytes)) =>
         IO.createDirectory(target.getParentFile)
         IO.write(target, bytes)
-        Some(Extracted(target, _sha256(bytes)))
+        Some(target)
       case xs =>
         sys.error(s"[sbt-cozy] multiple CNCF runtime descriptors resolved: ${xs.map(_._1.getAbsolutePath).mkString(", ")}")
     }
   }
-
-  private def _sha256(bytes: Array[Byte]): String =
-    MessageDigest.getInstance("SHA-256").digest(bytes).map(b => f"${b & 0xff}%02x").mkString
 }
 
 private[cozy] object CozyScaladocArchive {
   private val _schema = "cozy.component-scaladoc.v1"
   private val _manifest_file_name = "scaladoc-manifest.json"
-  private val _sha256_pattern = "^[0-9a-f]{64}$".r
   private val _source_link = "(?is)<a\\b[^>]*\\bhref\\s*=\\s*[\"'][^\"']+[\"'][^>]*>\\s*source\\s*</a>".r
-  private val _manifest_pattern = """\A\{"schema":"([^"]+)","sourceDigest":"([0-9a-f]{64})","contentDigest":"([0-9a-f]{64})","entries":\[(.*)\]\}\z""".r
-  private val _entry_pattern = """\{"path":"([^"]+)","sha256":"([0-9a-f]{64})"\}""".r
-
-  final case class Entry(path: String, sha256: String)
-  private final case class Manifest(sourceDigest: String, contentDigest: String, entries: Vector[Entry])
-
-  def exists(directory: File): Boolean =
-    Files.exists(directory.toPath, LinkOption.NOFOLLOW_LINKS)
+  final case class Entry(path: String)
 
   def requirePublicOptions(options: Seq[String]): Unit = {
     val prohibited = options.filter { option =>
@@ -448,104 +444,45 @@ private[cozy] object CozyScaladocArchive {
       sys.error(s"[sbt-cozy] cozyScaladocArchive requires public Scaladoc without source links; prohibited scalacOptions: ${prohibited.mkString(", ")}")
   }
 
-  def stage(documentation: File, directory: File, projectroot: File): File = {
-    if (!documentation.isDirectory)
-      sys.error(s"[sbt-cozy] Compile / doc did not create a Scaladoc directory: ${documentation.getAbsolutePath}")
-    if (exists(directory))
-      sys.error(s"[sbt-cozy] Scaladoc staging already exists and must be verified, not regenerated: ${directory.getAbsolutePath}")
-    Files.createDirectories(directory.toPath)
+  def stage(documentation: File, directory: File): File = {
     val root = documentation.toPath.toAbsolutePath.normalize()
     val staged = directory.toPath.toAbsolutePath.normalize()
-    val stream = Files.walk(root)
-    try {
-      stream.iterator().asScala.toVector.foreach { source =>
-        if (source != root && Files.isSymbolicLink(source))
-          sys.error(s"[sbt-cozy] Scaladoc generation produced a symbolic link: $source")
-        else if (Files.isRegularFile(source)) {
-          val relative = root.relativize(source).toString.replace('\\', '/')
-          if (!_is_source_page(relative)) {
-            val destination = staged.resolve(relative)
-            Option(destination.getParent).foreach(Files.createDirectories(_))
-            Files.copy(source, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-          }
-        }
-      }
-    } finally {
-      stream.close()
+    _require_directory(root, "Compile / doc Scaladoc directory")
+    val entries = _actual_entries(root)
+    _require_entries(entries, root)
+    if (!entries.exists(_.path == "index.html"))
+      sys.error(s"[sbt-cozy] Scaladoc generation is missing index.html: $root")
+    if (!entries.exists(entry => _is_search_or_symbol_evidence(entry.path)))
+      sys.error(s"[sbt-cozy] Scaladoc generation is missing generated search or symbol evidence: $root")
+    _require_no_source_disclosure(root, entries)
+    entries.foreach { entry =>
+      val destination = _selected_output(staged, entry.path)
+      Option(destination.getParent).foreach(Files.createDirectories(_))
+      Files.copy(root.resolve(entry.path), destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
     }
-    val entries = _actual_entries(staged)
-    val manifest = Manifest(sourceDigest(projectroot), _inventory_digest(entries), entries)
-    Files.write(
-      staged.resolve(_manifest_file_name),
-      _render(manifest).getBytes(StandardCharsets.UTF_8)
-    )
-    verify(directory, projectroot)
+    val manifest = _selected_output(staged, _manifest_file_name)
+    Files.write(manifest, _render(entries).getBytes(StandardCharsets.UTF_8))
     directory
   }
 
-  def verify(directory: File, projectroot: File): File = {
-    val staged = directory.toPath.toAbsolutePath.normalize()
-    _require_directory(staged, "Scaladoc staging directory")
-    val manifestpath = staged.resolve(_manifest_file_name)
-    _require_regular_file(manifestpath, "Scaladoc manifest")
-    val manifest = _parse_manifest(new String(Files.readAllBytes(manifestpath), StandardCharsets.UTF_8), manifestpath)
-    if (manifest.sourceDigest != sourceDigest(projectroot))
-      sys.error(s"[sbt-cozy] Scaladoc source-input digest differs from current Scala sources: $manifestpath")
-    _require_entries(manifest.entries, staged)
-    val actual = _actual_entries(staged)
-    if (actual != manifest.entries)
-      sys.error(s"[sbt-cozy] Scaladoc staged entries differ from the manifest: ${staged.toString}")
-    if (manifest.contentDigest != _inventory_digest(manifest.entries))
-      sys.error(s"[sbt-cozy] Scaladoc staged-content digest differs from the manifest: $manifestpath")
-    if (!manifest.entries.exists(_.path == "index.html"))
-      sys.error(s"[sbt-cozy] Scaladoc staging is missing index.html: ${staged.toString}")
-    if (!manifest.entries.exists(entry => _is_search_or_symbol_evidence(entry.path)))
-      sys.error(s"[sbt-cozy] Scaladoc staging is missing generated search or symbol evidence: ${staged.toString}")
-    _require_no_source_disclosure(staged, manifest.entries)
-    directory
-  }
-
-  def sourceDigest(projectroot: File): String = {
-    val root = projectroot.toPath.toAbsolutePath.normalize()
-    val sourcedir = root.resolve("src/main/scala")
-    if (!Files.exists(sourcedir))
-      _inventory_digest(Vector.empty)
-    else {
-      _require_directory(sourcedir, "Scala source directory")
-      val stream = Files.walk(sourcedir)
-      try {
-        val entries = stream.iterator().asScala.toVector.collect {
-          case path if path != sourcedir && Files.isSymbolicLink(path) =>
-            sys.error(s"[sbt-cozy] Scala source input must not be a symbolic link: $path")
-          case path if Files.isRegularFile(path) && path.getFileName.toString.endsWith(".scala") =>
-            Entry(root.relativize(path).toString.replace('\\', '/'), _sha256(Files.readAllBytes(path)))
-        }.sortBy(_.path)
-        _inventory_digest(entries)
-      } finally {
-        stream.close()
-      }
+  private def _selected_output(root: java.nio.file.Path, relative: String): java.nio.file.Path = {
+    val selected = relative.split('/').foldLeft(root) { (parent, segment) =>
+      if (Files.isSymbolicLink(parent) ||
+          (Files.exists(parent, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(parent)))
+        sys.error(s"[sbt-cozy] Scaladoc staging parent is unsafe or not a directory: $parent")
+      parent.resolve(segment)
     }
+    if (Files.isSymbolicLink(selected) ||
+        (Files.exists(selected, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(selected)))
+      sys.error(s"[sbt-cozy] Scaladoc staging output is unsafe or not a regular file: $selected")
+    selected
   }
-
-  private def _parse_manifest(text: String, path: java.nio.file.Path): Manifest =
-    text match {
-      case _manifest_pattern(schema, source, content, entries) if schema == _schema =>
-        val parsed = _entry_pattern.findAllMatchIn(entries).map(m => Entry(m.group(1), m.group(2))).toVector
-        if (parsed.map(_render_entry).mkString(",") != entries)
-          sys.error(s"[sbt-cozy] Scaladoc manifest entries are invalid or noncanonical: $path")
-        val manifest = Manifest(source, content, parsed)
-        if (_render(manifest) != text)
-          sys.error(s"[sbt-cozy] Scaladoc manifest is not canonical: $path")
-        manifest
-      case _ =>
-        sys.error(s"[sbt-cozy] Scaladoc manifest is missing canonical schema, digest, or entries: $path")
-    }
 
   private def _require_entries(entries: Vector[Entry], directory: java.nio.file.Path): Unit = {
     if (entries.isEmpty || entries.map(_.path) != entries.map(_.path).sorted || entries.map(_.path).distinct.size != entries.size)
       sys.error(s"[sbt-cozy] Scaladoc manifest entries are not uniquely sorted: $directory")
     entries.foreach { entry =>
-      if (!_is_safe_relative_path(entry.path) || entry.path == _manifest_file_name || !_is_sha256(entry.sha256))
+      if (!_is_safe_relative_path(entry.path) || entry.path == _manifest_file_name)
         sys.error(s"[sbt-cozy] Scaladoc manifest contains an unsafe staged entry: ${entry.path}")
     }
   }
@@ -560,7 +497,7 @@ private[cozy] object CozyScaladocArchive {
           val relative = directory.relativize(path).toString.replace('\\', '/')
           if (!_is_safe_relative_path(relative))
             sys.error(s"[sbt-cozy] Scaladoc staging contains an unsafe path: $relative")
-          if (relative == _manifest_file_name) None else Some(Entry(relative, _sha256(Files.readAllBytes(path))))
+          if (relative == _manifest_file_name || _is_source_page(relative)) None else Some(Entry(relative))
       }.flatten.sortBy(_.path)
     } finally {
       stream.close()
@@ -579,28 +516,25 @@ private[cozy] object CozyScaladocArchive {
       }
     }
 
-  // The manifest is canonical JSON: its exact bytes participate in the CAR package contract.
-  private def _render(manifest: Manifest): String = {
-    val entries = manifest.entries.map(_render_entry).mkString("[", ",", "]")
-    s"""{"schema":"${_schema}","sourceDigest":"${manifest.sourceDigest}","contentDigest":"${manifest.contentDigest}","entries":$entries}"""
+  // The v1 manifest declares the staged public Scaladoc paths.
+  private def _render(selected: Vector[Entry]): String = {
+    val entries = selected.map(_render_entry).mkString("[", ",", "]")
+    s"""{"schema":"${_schema}","entries":$entries}"""
   }
 
-  private def _render_entry(entry: Entry): String =
-    s"""{"path":"${entry.path}","sha256":"${entry.sha256}"}"""
-
-  private def _inventory_digest(entries: Vector[Entry]): String =
-    _sha256(entries.map(entry => s"${entry.path}\t${entry.sha256}\n").mkString.getBytes(StandardCharsets.UTF_8))
-
-  private def _sha256(bytes: Array[Byte]): String =
-    MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
+  private def _render_entry(entry: Entry): String = {
+    val path = entry.path.flatMap {
+      case '"' => "\\\""
+      case '\\' => "\\\\"
+      case c if c < ' ' => "\\u" + "%04x".format(c.toInt)
+      case c => c.toString
+    }
+    s"""{"path":"$path"}"""
+  }
 
   private def _require_directory(path: java.nio.file.Path, label: String): Unit =
     if (Files.isSymbolicLink(path) || !Files.isDirectory(path))
       sys.error(s"[sbt-cozy] $label is missing, unsafe, or not a directory: $path")
-
-  private def _require_regular_file(path: java.nio.file.Path, label: String): Unit =
-    if (Files.isSymbolicLink(path) || !Files.isRegularFile(path))
-      sys.error(s"[sbt-cozy] $label is missing, unsafe, or not a regular file: $path")
 
   private def _is_safe_relative_path(path: String): Boolean =
     path.nonEmpty &&
@@ -621,7 +555,6 @@ private[cozy] object CozyScaladocArchive {
   private def _is_text_path(path: String): Boolean =
     Vector(".css", ".html", ".js", ".json").exists(path.endsWith)
 
-  private def _is_sha256(value: String): Boolean = _sha256_pattern.pattern.matcher(value).matches()
 }
 
 private[cozy] final case class CozyReleaseSourcePolicy(mode: String, license: String)
@@ -686,7 +619,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
     val cozySourceArchive = taskKey[File]("Write the canonical component source archive inventory evidence.")
     val cozyReleaseSourceArchive = taskKey[File]("Stage and strictly verify the opted-in Component release source.")
-    val cozyScaladocArchive = taskKey[File]("Generate or strictly verify public Scaladoc staging for CAR packaging.")
+    val cozyScaladocArchive = taskKey[File]("Generate and stage public Scaladoc for CAR packaging.")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
     val cozyDevelopmentRuntimeManifest = taskKey[File]("Write development runtime admission evidence for a CAR project.")
     val cozyRuntimeEvidenceFiles = taskKey[Seq[File]]("Prepare the complete development runtime evidence set.")
@@ -746,7 +679,6 @@ object CozyPlugin extends AutoPlugin {
     val cozyPublishCoursierChannel = taskKey[File]("Publish configured Coursier channel entries to the warehouse")
     val cozyReviewEvidenceDir = settingKey[File]("Directory for provider-owned sbt CAR Review evidence documents")
     val cozyReviewCiPolicy = settingKey[SbtReviewCiPolicy]("Resolved deterministic/offline execution policy for CAR Review")
-    val cozyReviewInputFiles = taskKey[Seq[File]]("Project-owned source and definition files used to identify the Review target")
     val cozyReviewSbtEvidence = taskKey[File]("Emit deterministic sbt-cozy Review Provider descriptor, request, and task evidence bundle")
     val cozyReviewCbdEndpoint = settingKey[Option[String]]("Explicit private CBD Review HTTP gateway endpoint")
     val cozyReviewCozyProviderVersion = settingKey[Option[String]]("Explicit Cozy Review provider runtime version recorded in the provider descriptor and bundle")
@@ -867,7 +799,6 @@ object CozyPlugin extends AutoPlugin {
     cozyCoursierChannelEntries := Seq.empty,
     cozyReviewEvidenceDir := target.value / "cbd-review" / "sbt-cozy",
     cozyReviewCiPolicy := SbtReviewCiPolicy.resolve(cozyProjectConfig.value, sys.env).fold(error => sys.error(s"[sbt-cozy] $error"), identity),
-    cozyReviewInputFiles := SbtReviewEvidence.defaultInputFiles(baseDirectory.value),
     cozyReviewCbdEndpoint := cozyProjectConfig.value.value("review.cbd.endpoint"),
     cozyReviewCozyProviderVersion :=
       cozyProjectConfig.value.value("review.cozy.provider_version")
@@ -879,7 +810,7 @@ object CozyPlugin extends AutoPlugin {
       val backend = cozyGeneratorBackend.value.trim.toLowerCase
       val delegateprojectdir = cozyDelegateProjectDir.value
       val delegatecommand = cozyDelegateCommand.value
-      val resolvedfiles = (Compile / update).value.allFiles
+      val resolvedfiles = (Compile / dependencyClasspath).value.files
       val projectmetadata = cozyProjectMetadata.value
       val generationtarget = CozyGenerationVersionContract.requireGenerationTarget(
         projectmetadata,
@@ -914,8 +845,7 @@ object CozyPlugin extends AutoPlugin {
               target.value / "sbt-cozy" / "cncf-runtime.yaml"
             )
             Map(
-              "runtime.cncf.descriptor" -> descriptor.path.getAbsolutePath,
-              "runtime.cncf.descriptor.sha256" -> descriptor.sha256
+              "runtime.cncf.descriptor" -> descriptor.getAbsolutePath
             )
           } else {
             Map.empty[String, String]
@@ -1031,16 +961,14 @@ object CozyPlugin extends AutoPlugin {
       output
     },
 
-    cozyScaladocArchive := {
+    cozyScaladocArchive := Def.taskDyn {
       val staging = target.value / "cozy" / "scaladoc"
-      if (CozyScaladocArchive.exists(staging))
-        CozyScaladocArchive.verify(staging, baseDirectory.value)
-      else {
-        CozyScaladocArchive.requirePublicOptions((Compile / scalacOptions).value)
+      CozyScaladocArchive.requirePublicOptions((Compile / scalacOptions).value)
+      Def.task {
         val documentation = (Compile / doc).value
-        CozyScaladocArchive.stage(documentation, staging, baseDirectory.value)
+        CozyScaladocArchive.stage(documentation, staging)
       }
-    },
+    }.value,
 
     cozyComponentApiJar := {
       val log = streams.value.log
@@ -1122,111 +1050,132 @@ object CozyPlugin extends AutoPlugin {
 
     Compile / unmanagedJars ++= cozyResolvedComponentApiJars.value.map(Attributed.blank),
 
-    cozyBuildCar := {
-      val sourcedir = cozySourceDir.value
-      val log = streams.value.log
-      val scaladoc = cozyScaladocArchive.value
-      val releasesource = CozyReleaseSourcePolicy.resolve(cozyProjectMetadata.value).map { policy =>
-        val output = target.value / "cozy" / "release-source"
-        val dependencies = (Compile / update).value.allModules
-          .map(module => s"${module.organization}:${module.name}:${module.revision}")
+    cozyBuildCar := Def.taskDyn {
+      val projectmetadata = cozyProjectMetadata.value
+      val releasesourcetask: Def.Initialize[Task[Option[(File, CozyReleaseSourceVerification)]]] =
+        CozyReleaseSourcePolicy.resolve(projectmetadata) match {
+          case None => Def.task[Option[(File, CozyReleaseSourceVerification)]] { None }
+          case Some(policy) => Def.task[Option[(File, CozyReleaseSourceVerification)]] {
+            val managedmainsources = (Compile / managedSources).value
+            val managedmainroots = (Compile / managedSourceDirectories).value
+            val managedtestsources = (Test / managedSources).value
+            val managedtestroots = (Test / managedSourceDirectories).value
+            val compilescalacoptions = (Compile / scalacOptions).value
+            val testscalacoptions = (Test / scalacOptions).value
+            val modules = (Compile / update).value.allModules
+            val backend = cozyGeneratorBackend.value
+            val targetdir = target.value
+            val projectdir = baseDirectory.value
+            val delegateprojectdir = cozyDelegateProjectDir.value
+            val delegatecommand = cozyDelegateCommand.value
+            val log = streams.value.log
+            val output = targetdir / "cozy" / "release-source"
+            val dependencies = modules
+              .map(module => s"${module.organization}:${module.name}:${module.revision}")
+              .distinct
+              .sorted
+            val generators = (
+              projectmetadata.value("build.cozyVersion").map(version => s"org.simplemodeling:cozy:$version").toSeq ++
+                Seq(s"backend:$backend")
+            ).distinct.sorted
+            CozySbtBridge.writeComponentReleaseSource(
+              projectdir = projectdir,
+              output = output,
+              mode = policy.mode,
+              license = policy.license,
+              managedmainsources = managedmainsources,
+              managedmainroots = managedmainroots,
+              managedtestsources = managedtestsources,
+              managedtestroots = managedtestroots,
+              compilescalacoptions = compilescalacoptions,
+              testscalacoptions = testscalacoptions,
+              dependencies = dependencies,
+              generators = generators,
+              verifyexisting = output.exists(),
+              basedir = projectdir,
+              delegateprojectdir = delegateprojectdir,
+              delegatecommand = delegatecommand,
+              log = log
+            )
+            Some(output -> CozyReleaseSourceVerification(
+              managedmainsources,
+              managedmainroots,
+              managedtestsources,
+              managedtestroots,
+              compilescalacoptions,
+              testscalacoptions,
+              dependencies,
+              generators
+            ))
+          }
+        }
+      Def.task {
+        val releasesource = releasesourcetask.value
+        val sourcedir = cozySourceDir.value
+        val log = streams.value.log
+        val scaladoc = cozyScaladocArchive.value
+        val publication = CarPublicationCoordinate._project(
+          cozyProjectMetadata.value,
+          scalaBinaryVersion.value,
+          target.value,
+          cozyWarehouseDir.value
+        )
+        val archive = publication.archive
+
+        val mainjar = (Compile / packageBin).value
+        val classpathjars = (Compile / dependencyClasspath).value
+          .map(_.data)
+          .filter(file => file.isFile && file.getName.endsWith(".jar"))
+        val libjars = classpathjars
+          .filterNot(_.getAbsolutePath == mainjar.getAbsolutePath)
           .distinct
-          .sorted
-        val generators = (
-          cozyProjectMetadata.value.value("build.cozyVersion").map(version => s"org.simplemodeling:cozy:$version").toSeq ++
-            Seq(s"backend:${cozyGeneratorBackend.value}")
-        ).distinct.sorted
-        CozySbtBridge.writeComponentReleaseSource(
+          .sortBy(_.getName)
+        val generatedapijar = cozyComponentApiJar.value.toSeq
+        val spijars = (generatedapijar ++ cozySpiJars.value)
+          .filter(file => file.isFile && file.getName.endsWith(".jar"))
+          .distinct
+          .sortBy(_.getName)
+        val componentapidescriptor = Option(target.value / "cozy" / "component-api-descriptor.json").filter(_.isFile)
+        val modelmetadata =
+          Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile).toSeq ++
+            ((target.value / "cozy" / "model-metadata") ** "*.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+        val hascmlstylesnapshot = modelmetadata.exists(CozyManifestMetadata.hasCmlStyleSnapshot)
+        val abimanifestoutput = target.value / "cozy" / "abi-manifest.json"
+        if (abimanifestoutput.isFile)
+          IO.delete(abimanifestoutput)
+        val packagingmetadata = CozyManifestMetadata.from(
+          cozyManifestMetadata.value,
+          publication.release.identity.mavenArtifactId(),
+          publication.release._release,
+          hascmlstylesnapshot
+        )
+        CozySbtBridge.packageCar(
+          archive = archive,
+          mainjar = mainjar,
+          libjars = libjars,
+          spijars = spijars,
+          componentapidescriptor = componentapidescriptor,
+          modelmetadata = modelmetadata,
+          abimanifestoutput = abimanifestoutput,
           projectdir = baseDirectory.value,
-          output = output,
-          mode = policy.mode,
-          license = policy.license,
-          managedmainsources = (Compile / managedSources).value,
-          managedmainroots = (Compile / managedSourceDirectories).value,
-          managedtestsources = (Test / managedSources).value,
-          managedtestroots = (Test / managedSourceDirectories).value,
-          compilescalacoptions = (Compile / scalacOptions).value,
-          testscalacoptions = (Test / scalacOptions).value,
-          dependencies = dependencies,
-          generators = generators,
-          verifyexisting = output.exists(),
+          name = publication.release.identity.mavenArtifactId(),
+          version = publication.release._release,
+          component = packagingmetadata.component,
+          extensions = packagingmetadata.extensions,
+          config = packagingmetadata.config,
           basedir = baseDirectory.value,
           delegateprojectdir = cozyDelegateProjectDir.value,
           delegatecommand = cozyDelegateCommand.value,
-          log = log
+          log = log,
+          scaladocdir = Some(scaladoc),
+          releasesourcedir = releasesource.map(_._1),
+          releasesourceverification = releasesource.map(_._2)
         )
-        output -> CozyReleaseSourceVerification(
-          (Compile / managedSources).value,
-          (Compile / managedSourceDirectories).value,
-          (Test / managedSources).value,
-          (Test / managedSourceDirectories).value,
-          (Compile / scalacOptions).value,
-          (Test / scalacOptions).value,
-          dependencies,
-          generators
-        )
+
+        streams.value.log.info(s"[sbt-cozy] built CAR: ${archive.getAbsolutePath}")
+        archive
       }
-      val publication = CarPublicationCoordinate._project(
-        cozyProjectMetadata.value,
-        scalaBinaryVersion.value,
-        target.value,
-        cozyWarehouseDir.value
-      )
-      val archive = publication.archive
-
-      val mainjar = (Compile / packageBin).value
-      val classpathjars = (Compile / dependencyClasspath).value
-        .map(_.data)
-        .filter(file => file.isFile && file.getName.endsWith(".jar"))
-      val libjars = classpathjars
-        .filterNot(_.getAbsolutePath == mainjar.getAbsolutePath)
-        .distinct
-        .sortBy(_.getName)
-      val generatedapijar = cozyComponentApiJar.value.toSeq
-      val spijars = (generatedapijar ++ cozySpiJars.value)
-        .filter(file => file.isFile && file.getName.endsWith(".jar"))
-        .distinct
-        .sortBy(_.getName)
-      val componentapidescriptor = Option(target.value / "cozy" / "component-api-descriptor.json").filter(_.isFile)
-      val modelmetadata =
-        Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile).toSeq ++
-          ((target.value / "cozy" / "model-metadata") ** "*.json").get.filter(_.isFile).sortBy(_.getAbsolutePath)
-      val hascmlstylesnapshot = modelmetadata.exists(CozyManifestMetadata.hasCmlStyleSnapshot)
-      val abimanifestoutput = target.value / "cozy" / "abi-manifest.json"
-      if (abimanifestoutput.isFile)
-        IO.delete(abimanifestoutput)
-      val packagingmetadata = CozyManifestMetadata.from(
-        cozyManifestMetadata.value,
-        publication.release.identity.mavenArtifactId(),
-        publication.release._release,
-        hascmlstylesnapshot
-      )
-      CozySbtBridge.packageCar(
-        archive = archive,
-        mainjar = mainjar,
-        libjars = libjars,
-        spijars = spijars,
-        componentapidescriptor = componentapidescriptor,
-        modelmetadata = modelmetadata,
-        abimanifestoutput = abimanifestoutput,
-        projectdir = baseDirectory.value,
-        name = publication.release.identity.mavenArtifactId(),
-        version = publication.release._release,
-        component = packagingmetadata.component,
-        extensions = packagingmetadata.extensions,
-        config = packagingmetadata.config,
-        basedir = baseDirectory.value,
-        delegateprojectdir = cozyDelegateProjectDir.value,
-        delegatecommand = cozyDelegateCommand.value,
-        log = log,
-        scaladocdir = Some(scaladoc),
-        releasesourcedir = releasesource.map(_._1),
-        releasesourceverification = releasesource.map(_._2)
-      )
-
-      streams.value.log.info(s"[sbt-cozy] built CAR: ${archive.getAbsolutePath}")
-      archive
-    },
+    }.value,
 
     cozyBuildCAR := cozyBuildCar.value,
 
@@ -1585,14 +1534,12 @@ object CozyPlugin extends AutoPlugin {
       if (cozyPackaging.value.trim.equalsIgnoreCase("car"))
         Def.task {
           _write_sbt_review_evidence(
-            cozyReviewInputFiles.value,
             _task_result((cozyGenerate).result.value),
             _task_result((Compile / compile).result.value),
             _task_result((Test / test).result.value),
             _task_result((Compile / update).result.value),
             _task_result(cozyBuildCar.result.value),
             cozyReviewEvidenceDir.value,
-            baseDirectory.value,
             organization.value,
             moduleName.value,
             version.value,
@@ -1602,14 +1549,12 @@ object CozyPlugin extends AutoPlugin {
       else
         Def.task {
           _write_sbt_review_evidence(
-            cozyReviewInputFiles.value,
             _task_result((cozyGenerate).result.value),
             _task_result((Compile / compile).result.value),
             _task_result((Test / test).result.value),
             _task_result((Compile / update).result.value),
             "not-applicable",
             cozyReviewEvidenceDir.value,
-            baseDirectory.value,
             organization.value,
             moduleName.value,
             version.value,
@@ -1718,14 +1663,12 @@ object CozyPlugin extends AutoPlugin {
   }
 
   private def _write_sbt_review_evidence(
-    reviewinputfiles: Seq[File],
     generation: String,
     compilation: String,
     tests: String,
     dependencies: String,
     carbuild: String,
     directory: File,
-    projectroot: File,
     organization: String,
     name: String,
     version: String,
@@ -1742,10 +1685,10 @@ object CozyPlugin extends AutoPlugin {
     val targetidentity = SbtReviewEvidenceTarget(
       Option(organization).map(_.trim).filter(_.nonEmpty),
       name,
-      version,
-      SbtReviewEvidence.sourceDigest(projectroot, reviewinputfiles)
+      version
     )
     val artifacts = SbtReviewEvidence.render(
+      "review-sbt-cozy-" + java.util.UUID.randomUUID().toString,
       targetidentity,
       version,
       rawresults :+ SbtReviewTaskResult("task-result", aggregate)
@@ -3286,30 +3229,48 @@ private[cozy] object CozyDelegatedGenerator {
     }
   }
 
-  private[cozy] def generatedDestination(targetdir: File, relative: String): File = {
+  private[cozy] def generatedDestination(targetDir: File, relative: String): File = {
     val normalized = _normalize_path(relative)
     // The configured managed root may already include the legacy Scala root.
     // Preserve canonical main-root layout otherwise (including library output).
-    val path = if (targetdir.getName == "scala") normalized.stripPrefix("scala/") else normalized
-    targetdir / path
+    val path = if (targetDir.getName == "scala") normalized.stripPrefix("scala/") else normalized
+    targetDir / _normalize_path(path)
   }
 
-  private[cozy] def installGeneratedSource(generated: File, targetdir: File,
+  private[cozy] def installGeneratedSource(generated: File, targetDir: File,
     relative: String, legacyRelative: Option[String]
   ): File = {
-    val destination = generatedDestination(targetdir, relative)
-    val obsolete = (Vector(targetdir / _normalize_path(relative)) ++
-      legacyRelative.map(path => targetdir / _normalize_path(path)).toVector).
-      distinct.filter(file => file != destination && file.isFile)
-    val bytes = IO.readBytes(generated)
+    if (Files.isSymbolicLink(generated.toPath) || !generated.isFile)
+      sys.error(s"[sbt-cozy] generated source is missing, unsafe, or not a regular file: $generated")
+    val destination = generatedDestination(targetDir, relative)
+    val obsolete = (Vector(targetDir / _normalize_path(relative)) ++
+      legacyRelative.map(path => targetDir / _normalize_path(path)).toVector).
+      distinct.filter(_ != destination)
     obsolete.foreach { file =>
-      if (!java.util.Arrays.equals(IO.readBytes(file), bytes))
-        sys.error(s"[sbt-cozy] obsolete generated source differs from producer output; preserve and reconcile: $file")
+      _require_generated_path(targetDir, file)
+      Files.deleteIfExists(file.toPath)
     }
-    obsolete.foreach(IO.delete(_))
+    _require_generated_path(targetDir, destination)
     IO.createDirectory(destination.getParentFile)
-    IO.copyFile(generated, destination, preserveLastModified = true)
+    Files.copy(generated.toPath, destination.toPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
     destination
+  }
+
+  private def _require_generated_path(root: File, selected: File): Unit = {
+    val base = root.toPath.toAbsolutePath.normalize()
+    val path = selected.toPath.toAbsolutePath.normalize()
+    if (path == base || !path.startsWith(base))
+      sys.error(s"[sbt-cozy] generated source is outside the selected managed root: $path")
+    val segments = base.relativize(path).iterator().asScala.toVector
+    val parents = segments.dropRight(1).scanLeft(base)((parent, segment) => parent.resolve(segment))
+    parents.foreach { parent =>
+      if (Files.isSymbolicLink(parent) ||
+          (Files.exists(parent, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(parent)))
+        sys.error(s"[sbt-cozy] generated source parent is unsafe or not a directory: $parent")
+    }
+    if (Files.isSymbolicLink(path) ||
+        (Files.exists(path, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(path)))
+      sys.error(s"[sbt-cozy] generated source destination is unsafe or not a regular file: $path")
   }
 
   private[cozy] def delegateFailureMessage(
@@ -3365,8 +3326,14 @@ private[cozy] object CozyDelegatedGenerator {
     }
   }
 
-  private def _normalize_path(path: String): String =
-    path.replace('\\', '/').stripPrefix("/")
+  private def _normalize_path(path: String): String = {
+    val normalized = path.replace('\\', '/')
+    if (normalized.isEmpty || normalized.startsWith("/") ||
+        normalized.matches("^[A-Za-z]:.*") ||
+        normalized.split("/", -1).exists(segment => segment.isEmpty || segment == "." || segment == ".."))
+      sys.error(s"[sbt-cozy] generated source path must be a safe relative path: $path")
+    normalized
+  }
 }
 
 final case class CozyPackageMetadata(

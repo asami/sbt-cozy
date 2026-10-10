@@ -397,3 +397,187 @@ Bridge governance:
 - `scripts/check-bridge-fixtures.sh` detects fixture drift
 - `scripts/check-version-bump.sh` enforces a plugin version bump when bridge fixtures change
 - `scripts/check-bridge-compat.sh` runs the drift check, version-bump check, and test suite
+
+## Direct generated output — S55 handoff, 2026-10-10
+
+The current runtime ABI handoff declares the official sidecar filenames under
+`target/sbt-cozy/runtime-abi-resources.txt` after its existing epoch line.
+Generation availability requires that declaration and its selected files;
+projection copies their current bytes into `META-INF/cozy` in the main JAR.
+Ambiguous official producers and missing required declared files remain errors.
+Known sidecars no longer produced are removed; empty production is valid.
+Ordinary generation reuse continues to use the existing CML timestamps and
+settings. Direct I/O failure may leave partial generated output; regeneration
+is the recovery path.
+
+Cozy Phase71.5 S55 freezes path-only public Scaladoc staging in the existing
+`cozy.component-scaladoc.v1` format, dynamic optional release-source task selection
+and direct installation of the selected generated Scala paths. Required public
+index/search evidence, source privacy and safe selected paths remain contracts.
+The Plugin edit implementing those decisions is currently blocked by automatic
+approval review; the connected native/scripted fixture edits are unvalidated,
+and this partial handoff is not yet a compile-validity or acceptance claim.
+The parent owns the selected five-suite validation and independent review.
+Broader scripted execution and repository-full validation remain
+**deferred-not-run to PHASE-71.7**. Original R715-09/E715-02/E715-03 and whole
+Phase assurance obligations remain OPEN.
+
+## S55 final partial-state correction — 2026-10-10
+
+This factual correction supersedes only the earlier S55 handoff statements that
+describe all Plugin implementation as unapplied or optional release-source
+task selection as pending. Those earlier records and the complete raw platform
+rejection remain dated history.
+
+Current `P715-02-S55-GENERATED-ARCHIVE-DIRECT-OUTPUT` is
+**partially-implemented-unvalidated-unreviewed** under the original frozen
+S55 Manifest and the same twelve-path ownership.
+
+- **D03 applied:** `CozyPlugin.scala` received only the optional release-source
+  `Def.taskDyn` branch and once-captured source/evidence task inputs. The
+  successful scoped edit is **`5106e9`, exit 0**. Existing bridge behavior,
+  path-only release-source reuse, checks and runtime deletion behavior remain.
+- **D01/D02/D05 unapplied:** path-only Scaladoc producer staging, its dynamic
+  public-options/doc task and direct generated-Scala installation remain
+  blocked by the recorded automatic approval rejection. That operation was
+  neither retried nor bypassed; D03 was a distinct taskgraph-only operation.
+- **Runtime ABI and connected fixtures applied:** D04 runtime source/spec
+  edits succeeded in `80e86c`, exit 0; D06/D07 native and scripted fixture
+  edits succeeded in `bb8595`, exit 0. The seven runtime scenarios and one
+  native scenario remain the existing executable specifications. No new suite
+  or replacement protection-proof scenario was added.
+- **Validation not run:** the current Cozy compile/export prerequisite and
+  all five parent-selected suites remain unexecuted. The two-argument stage
+  fixture depends on unapplied D01; compile-validity, warning removal and
+  acceptance are not established.
+
+This correction changes documentation only. Source, executable specifications
+and fixtures are not edited again. No SBT, review, staging, commit, skill
+change, new source-operation approval or workflow transition is performed.
+The parent owns the remaining source-operation authorization and validation.
+Original external-library authority, fulfilled S50 approval, raw refusal,
+S54 results, Goal/bases/authority/binding/epoch, ledger revision 5 and repair
+20/nonconverging 0/Phase repair 0 are retained. Seven Stage Status triples and
+closure checkboxes remain unchanged. E01/E03/E04/E05, warnings/S49, pending
+independent assurance, exact acceptance commits and distinct release remain
+OPEN; broader scripted/full validation remains deferred-not-run to PHASE-71.7.
+
+## S55 approved implementation handoff — 2026-10-10
+
+This current factual amendment supersedes the earlier S55 partial/unapplied
+status only. Prior partial handoffs, the original full request/raw rejection
+and the D03 correction remain dated history.
+
+The same `P715-02-S55-GENERATED-ARCHIVE-DIRECT-OUTPUT` frozen Manifest and
+twelve-path responsibility now have **implementation edits applied,
+unvalidated and unreviewed**. The actual new human approval accepts selected
+generated-output overwrite, edited obsolete generated-path deletion and
+partial output after I/O failure; its record is
+[p715-02-s55-informed-human-approval.json](/Users/asami/src/dev2025/cozy/.codex-workflow/phases/PHASE-71.5/p715-02-s55-informed-human-approval.json).
+The parent observed the same Goal active in
+[p715-02-s55-active-approved-resume.json](/Users/asami/src/dev2025/cozy/.codex-workflow/phases/PHASE-71.5/p715-02-s55-active-approved-resume.json).
+
+One new scoped source-edit submission succeeded: **`348c11`, exit 0**.
+It applied remaining **D01/D02/D05** only to `CozyPlugin.scala`.
+The successful D03 optional release-source taskgraph edit (`5106e9`, exit 0),
+D04 runtime ABI handoff (`80e86c`, exit 0), and D06/D07 connected existing
+native/scripted fixtures (`bb8595`, exit 0) were retained and not replayed.
+
+Scaladoc staging selects the current producer's sorted public paths, omits
+source pages, requires index/search evidence and source privacy, copies those
+selected files directly with overwrite and writes path-only
+`cozy.component-scaladoc.v1` JSON. It neither seals stale target contents nor
+reads back its output. Its dynamic task checks public options before
+`Compile / doc`; normal SBT doc caching remains generation selection.
+Generated Scala installation resolves the selected managed-root canonical and
+legacy paths, rejects unsafe relative paths, root escapes, symlinks and wrong
+shapes, deletes only selected obsolete generated paths and directly copies the
+regular producer file. Edited obsolete output receives no byte-preservation
+gate. Required input, format, source privacy and ordinary I/O failures remain;
+partial direct output after failure is allowed.
+
+The compile/runtime-classpath export prerequisite and **all five selected
+suites are still not run by the parent**. No compile-validity, warning-removal,
+test-pass, independent-review or acceptance claim is made. Parent source/diff
+verification and actual compilation must resolve any authoring issue before
+acceptance; any repair needs its separately frozen repair handoff. The seven
+existing runtime scenarios and one native CAR scenario remain the executable
+specifications; no suite or replacement removal-proof scenario was added.
+Broader scripted/full validation remains deferred-not-run to PHASE-71.7.
+
+The original denied request was not replayed or bypassed. This was one newly
+authorized submission after informed human approval; the parent owns recording
+its actual submission count. Original external-library authority and fulfilled
+S50 approval retain their scope. Goal/four bases/authority/binding/epoch,
+ledger revision 5, repair20/nonconverging0/Phase repair0, seven Stage Status
+triples and closure checkboxes retain their state. E01/E03/E04/E05, warnings/S49,
+pending M2 and whole-Step/full-Phase independent assurance, exact local
+acceptance commits and distinct release remain OPEN. Prior native/audible/end
+card/EOF evidence is retained without replay. This worker runs no SBT, CLI,
+runtime, review, staging, commit or control-ledger operation.
+
+## S55 completed focused validation — 2026-10-10
+
+Current `P715-02-S55-GENERATED-ARCHIVE-DIRECT-OUTPUT` is
+**implemented-focused-validated-unreviewed**, under the unchanged original
+Manifest and the [parent-confirmed actual facts](/Users/asami/src/dev2025/cozy/.codex-workflow/phases/PHASE-71.5/p715-02-s55-validation-facts.json).
+This supersedes only the earlier current partial/unvalidated/caveat status;
+all earlier sections, original request/raw refusal and approval history remain
+dated evidence.
+
+The actual current Cozy **0.3.3-SNAPSHOT compile/runtime-classpath export**
+succeeded. It is a prerequisite, not suite coverage:
+[V01 typed result](/Users/asami/src/dev2025/cozy/.codex-workflow/phases/PHASE-71.5/p715-02-s55-validation-01-result.json),
+[V01 log](/private/tmp/skill.cncf.d/a-2ea88baf-a694-43ac-9ca7-6436210785ae/7016-20261010T014453Z.log),
+[V01 summary](/private/tmp/skill.cncf.d/a-2ea88baf-a694-43ac-9ca7-6436210785ae/7016-20261010T014453Z.summary.json).
+
+The existing **five suites / 53 tests all passed**:
+`CozyRuntimeAbiResourcesSpec`, `CozyDelegatedGeneratorSpec`,
+`CozyPackagingPolicySpec`, `CozyScaladocPackagingIntegrationSpec` and
+`CozyReleaseSourcePackagingIntegrationSpec`. Failed tests, aborted suites,
+canceled, ignored and pending counts are all **zero**:
+[V02 typed result](/Users/asami/src/dev2025/cozy/.codex-workflow/phases/PHASE-71.5/p715-02-s55-validation-02-result.json),
+[V02 log](/private/tmp/skill.cncf.d/a-e33ab4bf-6b57-4301-bba9-1b4353ea23db/8141-20261010T014559Z.log),
+[V02 summary](/private/tmp/skill.cncf.d/a-e33ab4bf-6b57-4301-bba9-1b4353ea23db/8141-20261010T014559Z.summary.json).
+Both invocations ended with SBT/wrapper **0/0**, released serial locks and
+verified consumption of their one-use execution permissions.
+
+Fresh compilation compiled **two main Scala sources and two test sources**.
+Actual warning/error lines are **zero**. The old ten selected Plugin taskgraph
+warnings are absent in this fresh compile, without warning suppression; this
+is current scoped evidence, not a whole-Phase warning-free claim.
+
+D01 path-only public Scaladoc staging, D02 public-options-before-dynamic-doc,
+D03 optional release-source dynamic task, D04 declared-filename ABI availability
+and direct projection, D05 direct generated-source installation, and D06/D07
+existing scenario/scripted-positive fixture changes are implemented.
+Mandatory index/search evidence, safe selected paths/root boundaries,
+non-symlink/regular-file shape, public format/source privacy and ordinary I/O
+failures retain their meanings. No hash/readback seal, rollback or replacement
+protection was added. Broader scripted execution is not part of these results.
+
+The newly informed and approved remaining-source submission **`348c11`,
+exit 0, count 1** remains distinct from the preserved original refusal.
+The exact source syntax/dead-helper repair **21** succeeded in **`241de6`,
+exit 0**, addressing `P715-S55-JSON-FORMAT-SYNTAX-001` and
+`P715-S55-DEAD-STAGING-HELPERS-001`. Its **M2 independent review remains OPEN**
+and requires the original first Step review; passing compilation is not review.
+
+The frozen V01/V02 SBT request summaries retain historical **repair20** text.
+Actual current live context/run, fix manifest and result records carry
+**repair21**. No counter is encoded in request authority. This is a factual
+metadata discrepancy, not a counter reset, authority change or rerun; raw
+request summaries are preserved. The same Goal/four original bases,
+authority/binding/epoch and review ledger revision **5** remain, with
+repair **21**, nonconverging **0**, Phase repair **0**.
+
+Whole E01 actual source-bound/Bloop, whole E03 original connected independent
+acceptance, E04 actual installed/cross-binary composition, E05
+InternalCandidate/authored AI `contentDigest`/resource-metadata purpose,
+other previously observed warnings/S49, pending M2 including21, complete
+original Step/full-Phase review, exact local acceptance commits and distinct
+release remain **OPEN**. All seven Stage Status triples and closure checkboxes
+are unchanged. Full/broader/scripted/probes remain **deferred-not-run to
+PHASE-71.7**. This factual documentation projection performs no new validation,
+self-review, staging, commit or workflow transition and claims no Step/Phase
+acceptance or closure.

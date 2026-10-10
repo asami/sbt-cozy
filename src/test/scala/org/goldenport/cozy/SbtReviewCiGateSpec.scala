@@ -7,7 +7,7 @@ import org.scalatest.wordspec.AnyWordSpec
 
 /*
  * @since   Jul. 23, 2026
- * @version Jul. 23, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final class SbtReviewCiGateSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -55,22 +55,17 @@ final class SbtReviewCiGateSpec extends AnyWordSpec with Matchers with GivenWhen
     }
   }
 
-  private val _digest = "sha256:" + ("a" * 64)
-
   private def _manifest(result: String, exitcode: Int): String =
     Printer.noSpaces.print(Json.obj(
       "schemaVersion" -> Json.fromString("textus.cbd.review-ci-artifact.v1"),
       "documentType" -> Json.fromString("review-ci-artifact-manifest"),
       "reviewId" -> Json.fromString("review-example"),
       "reportId" -> Json.fromString("report-example"),
-      "reportDigest" -> Json.fromString(_digest),
-      "targetDigest" -> Json.fromString(_digest),
-      "attestationDigest" -> Json.fromString(_digest),
       "profile" -> Json.fromString("development"),
       "limitations" -> Json.arr(),
       "gate" -> Json.obj("policyId" -> Json.fromString("cbd.default"), "policyVersion" -> Json.fromString("1.0.0"), "result" -> Json.fromString(result)),
       "exitCode" -> Json.fromInt(exitcode),
-      "artifactDirectory" -> Json.fromString("target/cbd-review/" + _digest.replace(':', '-')),
+      "artifactDirectory" -> Json.fromString("target/cbd-review/sbt-cozy"),
       "retention" -> Json.obj("mode" -> Json.fromString("ci-workspace"), "preserveOn" -> Json.arr(Json.fromString("pass"), Json.fromString("fail"), Json.fromString("unknown")), "publication" -> Json.fromString("not-triggered"), "distribution" -> Json.fromString("not-triggered"), "deployment" -> Json.fromString("not-triggered")),
       "artifacts" -> Json.obj(
         "canonicalResponse" -> _artifact("canonical-response.json"),
@@ -84,5 +79,5 @@ final class SbtReviewCiGateSpec extends AnyWordSpec with Matchers with GivenWhen
     ))
 
   private def _artifact(path: String): Json =
-    Json.obj("path" -> Json.fromString(path), "sha256" -> Json.fromString(_digest))
+    Json.obj("path" -> Json.fromString(path))
 }

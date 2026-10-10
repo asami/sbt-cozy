@@ -1,8 +1,6 @@
 package org.goldenport.cozy
 
 import java.io.File
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 
 import io.circe.{Json, JsonObject, Printer}
 import io.circe.parser.parse
@@ -10,7 +8,8 @@ import sbt._
 
 /*
  * @since   Jul. 16, 2026
- * @version Jul. 23, 2026
+ *  version Jul. 23, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 /** Deterministic local projections of a CBD-owned canonical Review response. */
@@ -98,18 +97,14 @@ private[cozy] object SbtReviewReportArtifacts {
         _string(attestation, "documentType").contains("review-attestation") &&
         _string(attestation, "attestationId").exists(_.nonEmpty) &&
         _string(attestation, "createdAt").exists(_.nonEmpty)
-    val identities = Vector("reviewId", "reportId", "reportDigest", "profile")
+    val identities = Vector("reviewId", "reportId", "profile")
     val sameidentities = identities.forall(key => _string(report, key).exists(value => _string(attestation, key).contains(value)))
-    val sametarget = _string(report.hcursor.downField("target").focus.getOrElse(Json.Null), "digest").exists(value => _string(attestation, "targetDigest").contains(value))
     val samegate = attestation.hcursor.downField("gate").focus.contains(report.hcursor.downField("gate").focus.getOrElse(Json.Null)) && _string(attestation.hcursor.downField("gate").focus.getOrElse(Json.Null), "result").contains(gate)
     val reportproviders = report.hcursor.downField("execution").downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding).sorted
     val attestedproviders = attestation.hcursor.downField("providers").as[Vector[Json]].toOption.getOrElse(Vector.empty).flatMap(_provider_binding).sorted
-    val attestationdigest = _string(attestation, "attestationDigest")
-    val expecteddigest = _digest(attestation.mapObject(_.remove("attestationDigest")))
     if (!validstructure) Left("cbd-review-attestation-structure-invalid")
-    else if (!sameidentities || !sametarget || !samegate) Left("cbd-review-attestation-binding-invalid")
+    else if (!sameidentities || !samegate) Left("cbd-review-attestation-binding-invalid")
     else if (reportproviders.isEmpty || reportproviders != attestedproviders) Left("cbd-review-attestation-providers-invalid")
-    else if (!attestationdigest.contains(expecteddigest)) Left("cbd-review-attestation-digest-invalid")
     else Right(())
   }
 
@@ -136,12 +131,6 @@ private[cozy] object SbtReviewReportArtifacts {
     Set("authorization", "cookie", "credential", "credentials", "password", "secret", "token", "apikey", "accesstoken", "refreshtoken").contains(normalized)
   }
 
-  private def _digest(value: Json): String = {
-    val bytes = Printer.noSpaces.copy(sortKeys = true).print(value).getBytes(StandardCharsets.UTF_8)
-    val digest = MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
-    s"sha256:$digest"
-  }
-
   private def _provider_binding(value: Json): Option[String] =
     for {
       provider <- value.hcursor.downField("provider").focus
@@ -150,8 +139,7 @@ private[cozy] object SbtReviewReportArtifacts {
       ruleset <- value.hcursor.downField("ruleSet").focus
       ruleid <- _string(ruleset, "id")
       ruleversion <- _string(ruleset, "version")
-      bundle <- _string(value, "bundleDigest")
-    } yield Vector(providerid, providerversion, ruleid, ruleversion, bundle).mkString("\u0000")
+    } yield Vector(providerid, providerversion, ruleid, ruleversion).mkString("\u0000")
 
   private def _html(report: Json, gate: String): String = {
     val title = _string(report, "reportId").getOrElse("CBD CAR Review")

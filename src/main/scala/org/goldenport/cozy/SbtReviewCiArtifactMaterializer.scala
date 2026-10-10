@@ -2,8 +2,7 @@ package org.goldenport.cozy
 
 import java.io.File
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, StandardCopyOption}
-import java.security.MessageDigest
+import java.nio.file.Files
 import java.util.Base64
 
 import io.circe.{Json, Printer}
@@ -12,7 +11,7 @@ import sbt.io.IO
 
 /*
  * @since   Jul. 23, 2026
- * @version Jul. 23, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 private[cozy] final case class SbtReviewCiArtifactFiles(canonicalJson: File, report: File, attestation: File, markdown: File, pdf: File, html: File, sarif: File, manifest: File)
@@ -41,13 +40,13 @@ private[cozy] object SbtReviewCiArtifactMaterializer {
       projections <- SbtReviewReportArtifacts.render(response)
       _ <- _safe_bounded_text(projections.html)
       _ <- _safe_bounded_line_text(projections.sarif)
-      data <- _data(bundle, response.report, attestation, response.gate)
-      files <- _write(new File(evidencedir.getParentFile, data.attestationDigest.replace(':', '-')), canonical, response.report, attestation, data, projections.html, projections.sarif)
+      data <- _data(bundle, response.report, response.gate)
+      files <- _write(evidencedir, canonical, response.report, attestation, data, projections.html, projections.sarif)
     } yield files
 
-  private final case class Data(markdown: String, pdf: Array[Byte], limitations: Vector[String], reportDigest: String, targetDigest: String, profile: String, gate: Json, gateResult: String, reviewId: String, reportId: String, attestationDigest: String)
+  private final case class Data(markdown: String, pdf: Array[Byte], limitations: Vector[String], profile: String, gate: Json, gateresult: String, reviewid: String, reportid: String)
 
-  private def _data(bundle: String, report: String, attestation: String, responsegate: String): Either[String, Data] =
+  private def _data(bundle: String, report: String, responsegate: String): Either[String, Data] =
     for {
       bundlejson <- parse(bundle).left.map(_ => "cbd-review-artifact-bundle-invalid")
       schema <- bundlejson.hcursor.get[String]("schemaVersion").toOption.filter(_ == "textus.cbd.review-artifact-bundle.v1").toRight("cbd-review-artifact-bundle-schema-invalid")
@@ -61,10 +60,6 @@ private[cozy] object SbtReviewCiArtifactMaterializer {
       _ <- _safe_text(new String(pdf, StandardCharsets.ISO_8859_1))
       limitations <- bundlejson.hcursor.get[Vector[String]]("limitations").toOption.toRight("cbd-review-artifact-limitations-invalid").flatMap(_limitations)
       reportjson <- parse(report).left.map(_ => "cbd-review-canonical-report-invalid")
-      reportdigest <- reportjson.hcursor.get[String]("reportDigest").toOption.filter(_digest).toRight("cbd-review-report-digest-invalid")
-      bundledigest <- bundlejson.hcursor.get[String]("reportDigest").toOption.filter(_digest).toRight("cbd-review-artifact-report-digest-invalid")
-      _ <- Either.cond(bundledigest == reportdigest, (), "cbd-review-artifact-report-digest-mismatch")
-      targetdigest <- reportjson.hcursor.downField("target").get[String]("digest").toOption.filter(_digest).toRight("cbd-review-target-digest-invalid")
       profile <- reportjson.hcursor.get[String]("profile").toOption.filter(_.nonEmpty).toRight("cbd-review-profile-missing")
       reviewid <- reportjson.hcursor.get[String]("reviewId").toOption.filter(_.nonEmpty).toRight("cbd-review-id-missing")
       reportid <- reportjson.hcursor.get[String]("reportId").toOption.filter(_.nonEmpty).toRight("cbd-review-id-missing")
@@ -73,35 +68,25 @@ private[cozy] object SbtReviewCiArtifactMaterializer {
       policyversion <- gate.hcursor.get[String]("policyVersion").toOption.filter(_.nonEmpty).toRight("cbd-review-gate-policy-invalid")
       gatevalue <- gate.hcursor.get[String]("result").toOption.filter(Set("pass", "fail", "unknown")).toRight("cbd-review-gate-invalid")
       _ <- Either.cond(gatevalue == responsegate, (), "cbd-review-response-gate-mismatch")
-      attestationdigest <- parse(attestation).toOption.flatMap(_.hcursor.get[String]("attestationDigest").toOption).filter(_digest).toRight("cbd-review-attestation-digest-invalid")
-    } yield Data(markdown, pdf, limitations, reportdigest, targetdigest, profile, gate, gatevalue, reviewid, reportid, attestationdigest)
+    } yield Data(markdown, pdf, limitations, profile, gate, gatevalue, reviewid, reportid)
 
   private def _write(directory: File, canonical: String, report: String, attestation: String, data: Data, html: String, sarif: String): Either[String, SbtReviewCiArtifactFiles] =
-    if (directory.exists) Left("cbd-review-artifact-directory-exists")
-    else {
-      val parent = directory.getParentFile
-      IO.createDirectory(parent)
-      val temporary = Files.createTempDirectory(parent.toPath, ".cbd-review-").toFile
-      try {
-        val files = _files(temporary)
-        IO.write(files.canonicalJson, canonical + "\n"); IO.write(files.report, report + "\n"); IO.write(files.attestation, attestation + "\n"); IO.write(files.markdown, data.markdown); Files.write(files.pdf.toPath, data.pdf); IO.write(files.html, html); IO.write(files.sarif, sarif + "\n")
-        _bounded_files(_artifact_files(files)).flatMap { _ =>
-          IO.write(files.manifest, _printer.print(_manifest(files, data)) + "\n")
-          _bounded_files(_artifact_files(files) :+ files.manifest).map { _ =>
-            Files.move(temporary.toPath, directory.toPath, StandardCopyOption.ATOMIC_MOVE)
-            _files(directory)
-          }
-        }
-      } catch { case _: Exception => Left("cbd-review-artifact-write-failed") }
-      finally if (temporary.exists) IO.delete(temporary)
-    }
+    try {
+      IO.createDirectory(directory)
+      val files = _files(directory)
+      IO.write(files.canonicalJson, canonical + "\n"); IO.write(files.report, report + "\n"); IO.write(files.attestation, attestation + "\n"); IO.write(files.markdown, data.markdown); Files.write(files.pdf.toPath, data.pdf); IO.write(files.html, html); IO.write(files.sarif, sarif + "\n")
+      _bounded_files(_artifact_files(files)).flatMap { _ =>
+        IO.write(files.manifest, _printer.print(_manifest(files, data)) + "\n")
+        _bounded_files(_artifact_files(files) :+ files.manifest).map(_ => files)
+      }
+    } catch { case _: Exception => Left("cbd-review-artifact-write-failed") }
 
   private def _files(directory: File): SbtReviewCiArtifactFiles = SbtReviewCiArtifactFiles(new File(directory, _names("canonical")), new File(directory, _names("report")), new File(directory, _names("attestation")), new File(directory, _names("markdown")), new File(directory, _names("pdf")), new File(directory, _names("html")), new File(directory, _names("sarif")), new File(directory, _names("manifest")))
 
   private def _manifest(files: SbtReviewCiArtifactFiles, data: Data): Json = {
-    val exitcode = SbtReviewCiGate.exitCodeFor(data.gateResult).fold(error => throw new IllegalStateException(error), identity)
+    val exitcode = SbtReviewCiGate.exitCodeFor(data.gateresult).fold(error => throw new IllegalStateException(error), identity)
     Json.obj(
-      "schemaVersion" -> Json.fromString("textus.cbd.review-ci-artifact.v1"), "documentType" -> Json.fromString("review-ci-artifact-manifest"), "reviewId" -> Json.fromString(data.reviewId), "reportId" -> Json.fromString(data.reportId), "reportDigest" -> Json.fromString(data.reportDigest), "targetDigest" -> Json.fromString(data.targetDigest), "attestationDigest" -> Json.fromString(data.attestationDigest), "profile" -> Json.fromString(data.profile), "limitations" -> Json.fromValues(data.limitations.map(Json.fromString)), "gate" -> data.gate, "exitCode" -> Json.fromInt(exitcode), "artifactDirectory" -> Json.fromString(s"target/cbd-review/${data.attestationDigest.replace(':', '-')}"), "retention" -> Json.obj("mode" -> Json.fromString("ci-workspace"), "preserveOn" -> Json.arr(Json.fromString("pass"), Json.fromString("fail"), Json.fromString("unknown")), "publication" -> Json.fromString("not-triggered"), "distribution" -> Json.fromString("not-triggered"), "deployment" -> Json.fromString("not-triggered")), "artifacts" -> Json.obj("canonicalResponse" -> _artifact(files.canonicalJson), "report" -> _artifact(files.report), "attestation" -> _artifact(files.attestation), "markdown" -> _artifact(files.markdown), "pdf" -> _artifact(files.pdf), "html" -> _artifact(files.html), "sarif" -> _artifact(files.sarif))
+      "schemaVersion" -> Json.fromString("textus.cbd.review-ci-artifact.v1"), "documentType" -> Json.fromString("review-ci-artifact-manifest"), "reviewId" -> Json.fromString(data.reviewid), "reportId" -> Json.fromString(data.reportid), "profile" -> Json.fromString(data.profile), "limitations" -> Json.fromValues(data.limitations.map(Json.fromString)), "gate" -> data.gate, "exitCode" -> Json.fromInt(exitcode), "artifactDirectory" -> Json.fromString(s"target/cbd-review/${files.manifest.getParentFile.getName}"), "retention" -> Json.obj("mode" -> Json.fromString("ci-workspace"), "preserveOn" -> Json.arr(Json.fromString("pass"), Json.fromString("fail"), Json.fromString("unknown")), "publication" -> Json.fromString("not-triggered"), "distribution" -> Json.fromString("not-triggered"), "deployment" -> Json.fromString("not-triggered")), "artifacts" -> Json.obj("canonicalResponse" -> _artifact(files.canonicalJson), "report" -> _artifact(files.report), "attestation" -> _artifact(files.attestation), "markdown" -> _artifact(files.markdown), "pdf" -> _artifact(files.pdf), "html" -> _artifact(files.html), "sarif" -> _artifact(files.sarif))
     )
   }
 
@@ -128,8 +113,6 @@ private[cozy] object SbtReviewCiArtifactMaterializer {
     else value.foldLeft[Either[String, Vector[String]]](Right(Vector.empty)) { (z, limitation) =>
       for { xs <- z; _ <- _safe_text(limitation) } yield xs :+ limitation
     }
-  private def _artifact(file: File): Json = Json.obj("path" -> Json.fromString(file.getName), "sha256" -> Json.fromString(_sha256(Files.readAllBytes(file.toPath))))
+  private def _artifact(file: File): Json = Json.obj("path" -> Json.fromString(file.getName))
   private def _decode_pdf(value: String): Option[Array[Byte]] = scala.util.Try(Base64.getDecoder.decode(value)).toOption.filter(bytes => bytes.length >= 4 && new String(bytes.take(4), StandardCharsets.ISO_8859_1) == "%PDF")
-  private def _digest(value: String): Boolean = value.matches("sha256:[0-9a-f]{64}")
-  private def _sha256(value: Array[Byte]): String = "sha256:" + MessageDigest.getInstance("SHA-256").digest(value).map(byte => f"${byte & 0xff}%02x").mkString
 }

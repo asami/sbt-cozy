@@ -3,7 +3,6 @@ package org.goldenport.cozy
 import java.io.File
 import java.nio.file.Files
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 import java.util.Base64
 
 import io.circe.Printer
@@ -15,7 +14,8 @@ import sbt.io.IO
 
 /*
  * @since   Jul. 16, 2026
- * @version Jul. 23, 2026
+ *  version Jul. 23, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -45,7 +45,7 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
       IO.delete(directory)
     }
 
-    "materialize one immutable CI artifact directory from CBD-owned projections" in {
+    "materialize the selected CI artifact directory from CBD-owned projections" in {
       Given("one canonical CBD response with its Markdown and PDF bundle")
       val root = Files.createTempDirectory("sbt-cozy-review-ci-artifacts").toFile
       val evidence = new File(root, "sbt-cozy")
@@ -53,13 +53,13 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
       val bundle = _artifact_bundle()
       val response = SbtReviewCanonicalResponse(_report, "fail", Some(_attestation), Some(canonical), Some(bundle))
 
-      When("sbt-cozy materializes the CI artifact attempt")
+      When("sbt-cozy materializes the artifacts in the selected evidence directory")
       val artifacts = try SbtReviewCiArtifactMaterializer.write(evidence, response).fold(error => fail(error), identity) finally ()
       val manifest = parse(IO.read(artifacts.manifest)).fold(error => fail(error.getMessage), identity)
 
-      Then("canonical, report, attestation, Markdown, PDF, projections, and manifest share one digest-keyed directory")
+      Then("canonical, report, attestation, Markdown, PDF, projections, and manifest use the selected evidence directory")
       Vector(artifacts.canonicalJson, artifacts.report, artifacts.attestation, artifacts.markdown, artifacts.pdf, artifacts.html, artifacts.sarif, artifacts.manifest).forall(_.isFile) shouldBe true
-      artifacts.canonicalJson.getParentFile shouldBe artifacts.manifest.getParentFile
+      artifacts.manifest.getParentFile shouldBe evidence
       manifest.hcursor.get[String]("documentType").toOption shouldBe Some("review-ci-artifact-manifest")
       manifest.hcursor.get[Int]("exitCode").toOption shouldBe Some(2)
       manifest.hcursor.get[Vector[String]]("limitations").toOption shouldBe Some(Vector("pdf.unsupported-character"))
@@ -69,7 +69,7 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
       IO.delete(root)
     }
 
-    "refuse an oversized CBD-owned artifact before creating a CI attempt directory" in {
+    "refuse an oversized CBD-owned artifact before writing the selected CI artifacts" in {
       Given("one canonical CBD response with Markdown beyond the artifact bound")
       val root = Files.createTempDirectory("sbt-cozy-review-ci-artifact-limit").toFile
       val evidence = new File(root, "sbt-cozy")
@@ -78,29 +78,29 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
       When("sbt-cozy admits the CBD artifact bundle")
       val result = SbtReviewCiArtifactMaterializer.write(evidence, response)
 
-      Then("it refuses the bounded output without retaining an attempt directory")
+      Then("it refuses the bounded input before writing CI artifacts")
       result shouldBe Left("cbd-review-artifact-output-too-large")
       root.listFiles.toVector shouldBe empty
       IO.delete(root)
     }
 
-    "refuse an oversized canonical response before creating a CI attempt directory" in {
+    "refuse an oversized canonical response before writing the selected CI artifacts" in {
       Given("one canonical response whose retained wire document exceeds the artifact bound")
       val root = Files.createTempDirectory("sbt-cozy-review-ci-canonical-limit").toFile
       val evidence = new File(root, "sbt-cozy")
       val oversizedcanonical = _canonical_response + ("x" * SbtReviewCiArtifactMaterializer.MAX_ARTIFACT_BYTES)
       val response = SbtReviewCanonicalResponse(_report, "fail", Some(_attestation), Some(oversizedcanonical), Some(_artifact_bundle()))
 
-      When("sbt-cozy validates every artifact before opening a temporary attempt directory")
+      When("sbt-cozy validates every input artifact before writing to the selected directory")
       val result = SbtReviewCiArtifactMaterializer.write(evidence, response)
 
-      Then("the oversized canonical output is refused without retaining any CI attempt")
+      Then("the oversized canonical input is refused before writing CI artifacts")
       result shouldBe Left("cbd-review-artifact-output-too-large")
       root.listFiles.toVector shouldBe empty
       IO.delete(root)
     }
 
-    "refuse an oversized PDF Base64 value before decoding or creating a CI attempt directory" in {
+    "refuse an oversized PDF Base64 value before decoding or writing CI artifacts" in {
       Given("one artifact bundle whose encoded PDF length proves it exceeds the artifact bound")
       val root = Files.createTempDirectory("sbt-cozy-review-ci-pdf-limit").toFile
       val evidence = new File(root, "sbt-cozy")
@@ -110,7 +110,7 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
       When("sbt-cozy checks the encoded PDF bound before calling the decoder")
       val result = SbtReviewCiArtifactMaterializer.write(evidence, response)
 
-      Then("the bundle is rejected without a decoded oversized payload or retained CI attempt")
+      Then("the bundle is rejected before decoding the oversized payload or writing CI artifacts")
       result shouldBe Left("cbd-review-artifact-output-too-large")
       root.listFiles.toVector shouldBe empty
       IO.delete(root)
@@ -145,13 +145,13 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
     }
 
     "refuse an attestation that is not bound to the canonical report" in {
-      Given("an attestation with another report digest")
+      Given("an attestation with another explicit report ID")
 
       When("sbt-cozy receives the otherwise valid canonical response")
       val result = SbtReviewReportArtifacts.render(SbtReviewCanonicalResponse(
         _report,
         "fail",
-        Some(_attestation_for("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"))
+        Some(_attestation_for("report-other"))
       ))
 
       Then("CI does not retain a drifting attestation")
@@ -194,8 +194,8 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
   }
 
   private val _report =
-    """{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-report","reportId":"report-example","reportDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reviewId":"review-example","profile":"development","target":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"execution":{"providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"},"bundleDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]},"gate":{"policyId":"cbd.default","policyVersion":"1.0.0","result":"fail"},"observations":[{"id":"finding-location","type":"finding","rule":{"id":"cozy.car.documentation-rationale"},"message":"<unsafe>","severity":"medium","locations":[{"path":"project.yaml","line":12}]},{"id":"missing-location","type":"finding","rule":{"id":"cozy.car.missing-location"},"message":"No location","severity":"low","locations":[]}]}"""
-  private val _attestation = _attestation_for("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    """{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-report","reportId":"report-example","reviewId":"review-example","profile":"development","target":{"kind":"project","name":"fixture"},"execution":{"providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"}}]},"gate":{"policyId":"cbd.default","policyVersion":"1.0.0","result":"fail"},"observations":[{"id":"finding-location","type":"finding","rule":{"id":"cozy.car.documentation-rationale"},"message":"<unsafe>","severity":"medium","locations":[{"path":"project.yaml","line":12}]},{"id":"missing-location","type":"finding","rule":{"id":"cozy.car.missing-location"},"message":"No location","severity":"low","locations":[]}]}"""
+  private val _attestation = _attestation_for("report-example")
   private val _canonical_response = Printer.noSpaces.print(io.circe.Json.obj(
     "schemaVersion" -> io.circe.Json.fromString("textus.cbd.review-submission.v1"),
     "documentType" -> io.circe.Json.fromString("canonical-review-response"),
@@ -206,21 +206,18 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
   private def _artifact_bundle(markdown: String = "# CBD CAR Review\n\nGate: fail\n", limitations: Vector[String] = Vector("pdf.unsupported-character"), pdfbase64: String = Base64.getEncoder.encodeToString("%PDF-1.7\nfixture\n".getBytes(StandardCharsets.UTF_8))): String = Printer.noSpaces.print(io.circe.Json.obj(
     "schemaVersion" -> io.circe.Json.fromString("textus.cbd.review-artifact-bundle.v1"),
     "documentType" -> io.circe.Json.fromString("review-artifact-bundle"),
-    "reportDigest" -> io.circe.Json.fromString("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
     "limitations" -> io.circe.Json.fromValues(limitations.map(io.circe.Json.fromString)),
     "markdown" -> io.circe.Json.fromString(markdown),
     "pdfBase64" -> io.circe.Json.fromString(pdfbase64)
   ))
   private val _cozy_provider = parse(_report).fold(error => fail(error.getMessage), identity).hcursor.downField("execution").downField("providers").as[Vector[io.circe.Json]].fold(error => fail(error.getMessage), _.head)
-  private val _sbt_provider = parse("""{"provider":{"id":"sbt-cozy","version":"0.1.0-SNAPSHOT"},"ruleSet":{"id":"sbt-cozy.build-evidence","version":"1.0.0"},"bundleDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}""").fold(error => fail(error.getMessage), identity)
+  private val _sbt_provider = parse("""{"provider":{"id":"sbt-cozy","version":"0.1.0-SNAPSHOT"},"ruleSet":{"id":"sbt-cozy.build-evidence","version":"1.0.0"}}""").fold(error => fail(error.getMessage), identity)
 
-  private def _attestation_for(reportdigest: String): String = {
+  private def _attestation_for(reportid: String): String = {
     val base = parse(
-      s"""{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-attestation","attestationId":"attestation-example","createdAt":"2026-07-16T00:00:00Z","reviewId":"review-example","reportId":"report-example","reportDigest":"$reportdigest","targetDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","profile":"development","providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"},"bundleDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"gate":{"policyId":"cbd.default","policyVersion":"1.0.0","result":"fail"}}"""
+      s"""{"schemaVersion":"textus.cbd.review-report.v1","documentType":"review-attestation","attestationId":"attestation-example","createdAt":"2026-07-16T00:00:00Z","reviewId":"review-example","reportId":"$reportid","profile":"development","providers":[{"provider":{"id":"cozy","version":"0.3.0"},"ruleSet":{"id":"cozy.car-review","version":"1.0.0"}}],"gate":{"policyId":"cbd.default","policyVersion":"1.0.0","result":"fail"}}"""
     ).fold(error => fail(error.getMessage), identity)
-    val bytes = Printer.noSpaces.copy(sortKeys = true).print(base).getBytes(StandardCharsets.UTF_8)
-    val digest = MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
-    Printer.noSpaces.print(base.mapObject(_.add("attestationDigest", io.circe.Json.fromString(s"sha256:$digest"))))
+    Printer.noSpaces.print(base)
   }
 
   private def _with_execution_providers(document: String, providers: Vector[io.circe.Json]): String = {
@@ -231,9 +228,6 @@ final class SbtReviewReportArtifactsSpec extends AnyWordSpec with Matchers with 
 
   private def _with_attestation_providers(providers: Vector[io.circe.Json]): String = {
     val parsed = parse(_attestation).fold(error => fail(error.getMessage), identity)
-    val unsigned = parsed.mapObject(_.remove("attestationDigest").add("providers", io.circe.Json.fromValues(providers)))
-    val bytes = Printer.noSpaces.copy(sortKeys = true).print(unsigned).getBytes(StandardCharsets.UTF_8)
-    val digest = MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
-    Printer.noSpaces.print(unsigned.mapObject(_.add("attestationDigest", io.circe.Json.fromString(s"sha256:$digest"))))
+    Printer.noSpaces.print(parsed.mapObject(_.add("providers", io.circe.Json.fromValues(providers))))
   }
 }
