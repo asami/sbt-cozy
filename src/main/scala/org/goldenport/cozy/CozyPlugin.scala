@@ -22,7 +22,7 @@ import scala.sys.process._
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
  *  version Sep. 28, 2026
- * @version Oct. 5, 2026
+ * @version Oct. 17, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -697,6 +697,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyGenerationVersionOverrides = settingKey[Map[String, String]]("Explicit generation version overrides passed to Cozy bridge settings.")
     val cozyGenerationTarget = settingKey[String]("Generation target: 'cncf' for component output or 'library' for pure model output.")
     val cozyCncfRuntimeDescriptorInput = taskKey[Option[File]]("Optional prepared CNCF runtime descriptor source file for cozy backend CNCF generation; otherwise use resolved dependency jars.")
+    val cozyCncfRuntimeArtifactInput = taskKey[Option[File]]("Optional native CNCF runtime JAR for explicit Snapshot source-build CAR packaging.")
     val cozySkipUnchangedGeneration = settingKey[Boolean]("Skip code generation when CML timestamps and generator settings are unchanged.")
     val cozyWebDescriptorSync = settingKey[Boolean]("Synchronize src/main/web-inf/form.yaml from CML WEB operation form metadata.")
     val cozyGenerate = taskKey[Seq[File]]("Generate Scala sources from CML/cozy definitions")
@@ -816,6 +817,7 @@ object CozyPlugin extends AutoPlugin {
     cozyGenerationVersionOverrides := Map.empty,
     cozyGenerationTarget := CozyGenerationVersionContract.generationTarget(cozyProjectMetadata.value),
     cozyCncfRuntimeDescriptorInput := None,
+    cozyCncfRuntimeArtifactInput := None,
     _cncf_runtime_descriptor_selection := Def.taskDyn {
       val sourcedir = cozySourceDir.value
       val backend = cozyGeneratorBackend.value.trim.toLowerCase
@@ -1210,7 +1212,11 @@ object CozyPlugin extends AutoPlugin {
       val classpathjars = (Compile / dependencyClasspath).value
         .map(_.data)
         .filter(file => file.isFile && file.getName.endsWith(".jar"))
-      val libjars = classpathjars
+      val sourcepackaging = CozySourceBuildPackaging.select(
+        cozyCncfRuntimeArtifactInput.value,
+        cozyProjectMetadata.value
+      )
+      val libjars = sourcepackaging.libraryJars(classpathjars)
         .filterNot(_.getAbsolutePath == mainjar.getAbsolutePath)
         .distinct
         .sortBy(_.getName)
@@ -1253,7 +1259,8 @@ object CozyPlugin extends AutoPlugin {
         log = log,
         scaladocdir = Some(scaladoc),
         releasesourcedir = releasesource.map(_._1),
-        releasesourceverification = releasesource.map(_._2)
+        releasesourceverification = releasesource.map(_._2),
+        sourceBuildVersions = sourcepackaging.sourceversions
       )
 
       streams.value.log.info(s"[sbt-cozy] built CAR: ${archive.getAbsolutePath}")
@@ -3705,7 +3712,8 @@ private[cozy] object CozySbtBridge {
     log: Logger,
     scaladocdir: Option[File] = None,
     releasesourcedir: Option[File] = None,
-    releasesourceverification: Option[CozyReleaseSourceVerification] = None
+    releasesourceverification: Option[CozyReleaseSourceVerification] = None,
+    sourceBuildVersions: Option[(String, String)] = None
   ): Unit = {
     if (releasesourcedir.isDefined != releasesourceverification.isDefined)
       sys.error("[sbt-cozy] release-source packaging requires directory and verification inputs together")
@@ -3731,6 +3739,7 @@ private[cozy] object CozySbtBridge {
             _csv_arg("model-metadata", modelmetadata.map(_.getAbsolutePath)) ++
             Vector("--abi-manifest-output", abimanifestoutput.getAbsolutePath) ++
             Vector("--project-dir", projectdir.getAbsolutePath) ++
+            CozySourceBuildPackaging.arguments(sourceBuildVersions) ++
             scaladocdir.toVector.flatMap(directory => Vector("--scaladoc-dir", directory.getAbsolutePath)) ++
             releasesourcedir.toVector.flatMap(directory => Vector("--release-source-dir", directory.getAbsolutePath)) ++
             releasesourceverification.toVector.flatMap { verification =>
