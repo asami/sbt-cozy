@@ -2,7 +2,6 @@ package org.goldenport.cozy
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
-import java.security.MessageDigest
 import java.util.Comparator
 import java.util.zip.{ZipEntry, ZipFile, ZipOutputStream}
 
@@ -14,7 +13,7 @@ import org.scalatest.wordspec.AnyWordSpec
 
 /*
  * @since   Aug. 25, 2026
- * @version Aug. 25, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyScaladocPackagingIntegrationSpec
@@ -53,7 +52,7 @@ final class CozyScaladocPackagingIntegrationSpec
         val delegatecommand = Seq("java", "-cp", classpath, "cozy.Cozy")
         val cncfversion = "0.5.17"
         val componentversion = "0.0.1-SNAPSHOT"
-        val source = _write(
+        _write(
           projectroot.resolve("src/main/scala/fixture/PublicApi.scala"),
           "package fixture\nfinal class PublicApi\n"
         )
@@ -75,7 +74,7 @@ final class CozyScaladocPackagingIntegrationSpec
           "META-INF/cncf/runtime.yaml",
           _runtime_descriptor(cncfversion)
         )
-        val staging = _write_scaladoc_staging(projectroot, source)
+        val staging = _write_scaladoc_staging(projectroot)
         val archive = projectroot.resolve(s"target/${_component_artifact}-${componentversion}.car")
         val abimanifestoutput = projectroot.resolve("target/cozy/abi-manifest.json")
 
@@ -104,16 +103,16 @@ final class CozyScaladocPackagingIntegrationSpec
         Then("the CAR contains exactly the public staged entries and their original bytes")
         val stagedentries = _scaladoc_entries(staging)
         _zip_entries(archive).filter(_.startsWith("scaladoc/")) shouldBe
-          (stagedentries.map { case (path, _) => s"scaladoc/$path" }.toSet +
+          (stagedentries.map(path => s"scaladoc/$path").toSet +
             "scaladoc/scaladoc-manifest.json")
-        stagedentries.foreach { case (path, _) =>
+        stagedentries.foreach { path =>
           _zip_bytes(archive, s"scaladoc/$path").toVector shouldBe
             Files.readAllBytes(staging.resolve(path)).toVector
         }
         _zip_bytes(archive, "scaladoc/scaladoc-manifest.json").toVector shouldBe
           Files.readAllBytes(staging.resolve("scaladoc-manifest.json")).toVector
-        stagedentries.map(_._1) should contain allOf ("index.html", "index.js")
-        stagedentries.map(_._1) should not contain "src-html/PublicApi.scala.html"
+        stagedentries should contain allOf ("index.html", "index.js")
+        stagedentries should not contain "src-html/PublicApi.scala.html"
         Files.readString(staging.resolve("index.js"), StandardCharsets.UTF_8) should not include "source"
       }
     }
@@ -187,38 +186,24 @@ final class CozyScaladocPackagingIntegrationSpec
        |}
        |""".stripMargin
 
-  private def _write_scaladoc_staging(projectroot: Path, source: Path): Path = {
+  private def _write_scaladoc_staging(projectroot: Path): Path = {
+    val documentation = projectroot.resolve("target/generated-scaladoc")
     val staging = projectroot.resolve("target/cozy/scaladoc")
-    _write(staging.resolve("index.html"), "<html><body>PublicApi</body></html>")
-    _write(staging.resolve("index.js"), "window.searchIndex = ['PublicApi']")
-    val entries = _scaladoc_entries(staging)
-    val sourceentries = Vector(
-      projectroot.relativize(source).toString.replace('\\', '/') -> _sha256(Files.readAllBytes(source))
-    )
-    val sourcedigest = _inventory_digest(sourceentries)
-    val contentdigest = _inventory_digest(entries)
-    val entriesjson = entries.map { case (path, digest) =>
-      s"""{"path":"$path","sha256":"$digest"}"""
-    }.mkString("[", ",", "]")
-    _write(
-      staging.resolve("scaladoc-manifest.json"),
-      s"""{"schema":"cozy.component-scaladoc.v1","sourceDigest":"$sourcedigest","contentDigest":"$contentdigest","entries":$entriesjson}"""
-    )
+    _write(documentation.resolve("index.html"), "<html><body>PublicApi</body></html>")
+    _write(documentation.resolve("index.js"), "window.searchIndex = ['PublicApi']")
+    CozyScaladocArchive.stage(documentation.toFile, staging.toFile)
     staging
   }
 
-  private def _scaladoc_entries(staging: Path): Vector[(String, String)] = {
+  private def _scaladoc_entries(staging: Path): Vector[String] = {
     val stream = Files.walk(staging)
     try {
       stream.iterator().asScala.toVector.collect {
         case path if Files.isRegularFile(path) && path.getFileName.toString != "scaladoc-manifest.json" =>
-          staging.relativize(path).toString.replace('\\', '/') -> _sha256(Files.readAllBytes(path))
-      }.sortBy(_._1)
+          staging.relativize(path).toString.replace('\\', '/')
+      }.sorted
     } finally stream.close()
   }
-
-  private def _inventory_digest(entries: Vector[(String, String)]): String =
-    _sha256(entries.map { case (path, digest) => s"$path\t$digest\n" }.mkString.getBytes(StandardCharsets.UTF_8))
 
   private def _write(path: Path, content: String): Path = {
     Option(path.getParent).foreach(Files.createDirectories(_))
@@ -252,9 +237,6 @@ final class CozyScaladocPackagingIntegrationSpec
       finally input.close()
     } finally zip.close()
   }
-
-  private def _sha256(bytes: Array[Byte]): String =
-    MessageDigest.getInstance("SHA-256").digest(bytes).map(byte => f"${byte & 0xff}%02x").mkString
 
   private def _with_temp_dir[A](prefix: String)(body: Path => A): A = {
     val directory = Files.createTempDirectory(prefix)

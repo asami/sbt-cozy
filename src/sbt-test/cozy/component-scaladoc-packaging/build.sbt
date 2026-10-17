@@ -2,15 +2,12 @@ import org.goldenport.cozy.{CozyProjectIdentityContract, CozyProjectIdentityEvid
 import org.goldenport.cozy.CozyPlugin.autoImport._
 
 import java.nio.charset.StandardCharsets
-import java.nio.file.Files
 
 def _scaladoc_manifest_entries_(file: File): Vector[String] = {
   val text = IO.read(file)
-  val entry = """\{"path":"([^"]+)","sha256":"[0-9a-f]{64}"\}""".r
+  val entry = """\{"path":"([^"]+)"\}""".r
   val entries = entry.findAllMatchIn(text).map(_.group(1)).toVector
-  if (!text.startsWith("{\"schema\":\"cozy.component-scaladoc.v1\",\"sourceDigest\":\"") ||
-      !text.contains("\",\"contentDigest\":\"") ||
-      !text.contains("\",\"entries\":[") ||
+  if (text != s"""{"schema":"cozy.component-scaladoc.v1","entries":${entries.map(path => s"""{"path":"$path"}""").mkString("[", ",", "]")}}""" ||
       text.endsWith("\n") ||
       entries.isEmpty ||
       entries != entries.sorted)
@@ -26,15 +23,6 @@ lazy val verifyScaladocStaging = taskKey[Unit](
 )
 lazy val verifyScaladocDisclosure = taskKey[Unit](
   "DOC03-SDOC-AC-02: verify public-only Scaladoc disclosure without source links"
-)
-lazy val tamperScaladocDeclaredContent = taskKey[Unit](
-  "DOC03-SDOC-AC-03a: prepare strict tampered Scaladoc failure"
-)
-lazy val removeScaladocDeclaredContent = taskKey[Unit](
-  "DOC03-SDOC-AC-03b: prepare strict missing Scaladoc failure"
-)
-lazy val changeScaladocSourceAfterStaging = taskKey[Unit](
-  "DOC03-SDOC-AC-03c: prepare strict stale Scaladoc failure"
 )
 lazy val projectIdentityEvidence = settingKey[CozyProjectIdentityEvidence](
   "Admitted canonical project identity evidence"
@@ -80,28 +68,5 @@ lazy val root = (project in file("."))
         sys.error("Scaladoc staging exposes a source link")
       if ((staging / "src-html").exists())
         sys.error("Scaladoc staging contains src-html source pages")
-    },
-    tamperScaladocDeclaredContent := {
-      val staging = target.value / "cozy" / "scaladoc"
-      val manifest = staging / "scaladoc-manifest.json"
-      val declared = _scaladoc_manifest_entries_(manifest).find(_ != "index.html").getOrElse(
-        sys.error("Scaladoc manifest does not declare a mutable evidence entry")
-      )
-      val evidence = staging / declared
-      Files.write(evidence.toPath, "tampered target evidence".getBytes(StandardCharsets.UTF_8))
-    },
-    removeScaladocDeclaredContent := {
-      val staging = target.value / "cozy" / "scaladoc"
-      val manifest = staging / "scaladoc-manifest.json"
-      val declared = _scaladoc_manifest_entries_(manifest).find(_ != "index.html").getOrElse(
-        sys.error("Scaladoc manifest does not declare a removable evidence entry")
-      )
-      val evidence = staging / declared
-      Files.delete(evidence.toPath)
-    },
-    changeScaladocSourceAfterStaging := {
-      val source = baseDirectory.value / "src" / "main" / "scala" / "fixture" / "PublicApi.scala"
-      val originalSource = Files.readAllBytes(source.toPath)
-      Files.write(source.toPath, originalSource ++ "\n// stale-source-check\n".getBytes(StandardCharsets.UTF_8))
     }
   )

@@ -1,15 +1,12 @@
 package org.goldenport.cozy
 
-import java.io.{BufferedInputStream, File, FileInputStream}
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
-import scala.collection.mutable.ArrayBuffer
+import java.io.File
 
 import sbt._
 
 /*
  * @since   Jul. 16, 2026
- * @version Jul. 16, 2026
+ * @version Oct. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 /**
@@ -21,8 +18,7 @@ import sbt._
 private[cozy] final case class SbtReviewEvidenceTarget(
   organization: Option[String],
   name: String,
-  version: String,
-  digest: String
+  version: String
 )
 
 private[cozy] final case class SbtReviewTaskResult(
@@ -42,64 +38,11 @@ private[cozy] object SbtReviewEvidence {
   val RULE_SET_ID = "sbt-cozy.build-evidence"
   val CAPABILITY_ID = "sbt-cozy.build-evidence"
 
-  private val _excluded_directories = Set(".git", ".bloop", ".bsp", ".idea", ".metals", ".scala-build", "target")
-  private val _root_input_names = Set(
-    "assembly-descriptor.yaml",
-    "build.sbt",
-    "component-descriptor.yaml",
-    "project.yaml"
-  )
-
-  def sourceDigest(base: File): String = {
-    val root = base.getCanonicalFile
-    sourceDigest(root, defaultInputFiles(root))
-  }
-
-  def sourceDigest(base: File, inputFiles: Seq[File]): String = {
-    val root = base.getCanonicalFile
-    val files = inputFiles
-      .filter(_.isFile)
-      .map(_.getCanonicalFile)
-      .filter(file => IO.relativize(root, file).isDefined)
-      .distinct
-      .sortBy(file => IO.relativize(root, file).getOrElse(file.getName))
-    val material = files.map { file =>
-      val relative = IO.relativize(root, file).getOrElse(file.getName).replace(File.separatorChar, '/')
-      s"$relative:${_sha256(file)}"
-    }.mkString("\n")
-    _digest(material)
-  }
-
-  def defaultInputFiles(base: File): Vector[File] = {
-    val root = base.getCanonicalFile
-    val files = ArrayBuffer.empty[File]
-    Option(root.listFiles).toVector.flatten.foreach { file =>
-      if (file.isFile && (_root_input_names.contains(file.getName) || file.getName.endsWith(".sbt")))
-        files += file
-    }
-    Vector(root / ".cozy", root / "project", root / "src").foreach { directory =>
-      if (directory.isDirectory)
-        files ++= (directory ** "*").get.filter(_is_review_input(root, _))
-    }
-    files.map(_.getCanonicalFile).distinct.sortBy(file => IO.relativize(root, file).getOrElse(file.getName)).toVector
-  }
-
-  private def _is_review_input(root: File, file: File): Boolean =
-    file.isFile && IO.relativize(root, file).exists { relative =>
-      val segments = relative.split(java.util.regex.Pattern.quote(File.separator)).toVector
-      !segments.exists(_excluded_directories.contains) &&
-        !segments.sliding(2).exists(_.toVector == Vector("project", "project"))
-    }
-
-  def render(target: SbtReviewEvidenceTarget, providerVersion: String, results: Seq[SbtReviewTaskResult]): SbtReviewEvidenceArtifacts = {
+  def render(reviewId: String, target: SbtReviewEvidenceTarget, providerVersion: String, results: Seq[SbtReviewTaskResult]): SbtReviewEvidenceArtifacts = {
     val normalized = results.sortBy(_.task).toVector
-    val reviewid = s"sbt-cozy-${target.name}-${target.digest.stripPrefix("sha256:").take(16)}"
-    val request = _request(reviewid, target)
-    val requestdigest = _digest(request)
+    val request = _request(reviewId, target)
     val descriptor = _descriptor(providerVersion)
-    val bundlefields = _bundle_fields(reviewid, target, providerVersion, requestdigest, normalized)
-    val bundlewithoutdigest = _object(bundlefields)
-    val bundle = _object(Vector("bundleDigest" -> _string(_digest(bundlewithoutdigest))) ++ bundlefields)
+    val bundle = _object(_bundle_fields(reviewId, target, providerVersion, normalized))
     SbtReviewEvidenceArtifacts(descriptor, request, bundle)
   }
 
@@ -152,8 +95,7 @@ private[cozy] object SbtReviewEvidence {
   private def _bundle_fields(
     reviewid: String,
     target: SbtReviewEvidenceTarget,
-    providerVersion: String,
-    requestDigest: String,
+    providerversion: String,
     results: Vector[SbtReviewTaskResult]
   ): Vector[(String, String)] = {
     val evidence = results.zipWithIndex.map { case (result, index) =>
@@ -170,8 +112,7 @@ private[cozy] object SbtReviewEvidence {
       "evidence" -> _array(evidence),
       "limitations" -> _array(Vector(_limitation("sbt-evidence-no-quality-assessment", "capability", Some(CAPABILITY_ID), "sbt-cozy records task evidence but does not assess quality or produce a gate result."))),
       "observations" -> _array(Vector.empty),
-      "provider" -> _object(Vector("id" -> _string(PROVIDER_ID), "version" -> _string(providerVersion))),
-      "requestDigest" -> _string(requestDigest),
+      "provider" -> _object(Vector("id" -> _string(PROVIDER_ID), "version" -> _string(providerversion))),
       "reviewId" -> _string(reviewid),
       "ruleSet" -> _object(Vector("id" -> _string(RULE_SET_ID), "version" -> _string("1.0.0"))),
       "schemaVersion" -> _string(SCHEMA_VERSION),
@@ -181,7 +122,6 @@ private[cozy] object SbtReviewEvidence {
 
   private def _target(target: SbtReviewEvidenceTarget): String =
     _object(Vector(
-      "digest" -> _string(target.digest),
       "kind" -> _string("project"),
       "name" -> _string(target.name),
       "version" -> _string(target.version)
@@ -221,28 +161,5 @@ private[cozy] object SbtReviewEvidence {
       case c => c.toString
     }
     "\"" + escaped + "\""
-  }
-
-  private def _digest(value: String): String =
-    "sha256:" + _sha256(value.getBytes(StandardCharsets.UTF_8))
-
-  private def _sha256(value: Array[Byte]): String =
-    MessageDigest.getInstance("SHA-256").digest(value).map(byte => f"${byte & 0xff}%02x").mkString
-
-  private def _sha256(file: File): String = {
-    val digest = MessageDigest.getInstance("SHA-256")
-    val input = new BufferedInputStream(new FileInputStream(file))
-    val buffer = new Array[Byte](64 * 1024)
-    try {
-      var length = input.read(buffer)
-      while (length >= 0) {
-        if (length > 0)
-          digest.update(buffer, 0, length)
-        length = input.read(buffer)
-      }
-    } finally {
-      input.close()
-    }
-    digest.digest().map(byte => f"${byte & 0xff}%02x").mkString
   }
 }

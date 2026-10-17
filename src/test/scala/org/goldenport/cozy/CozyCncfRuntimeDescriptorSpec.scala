@@ -1,80 +1,90 @@
 package org.goldenport.cozy
 
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Path, Paths}
-import java.security.MessageDigest
+import java.nio.file.{Files, Path}
+import org.scalacheck.{Gen, Prop, Test}
 import java.util.zip.{ZipEntry, ZipOutputStream}
 import scala.collection.JavaConverters._
-import org.scalacheck.{Gen, Prop, Test}
 import org.scalatest.GivenWhenThen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
 /*
  * @since   Jul. 15, 2026
- * @version Oct. 5, 2026
+ * @version Oct. 17, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
   "The sbt-cozy CNCF runtime descriptor transport" should {
-    "resolved JAR input" which {
-      "extract the descriptor from the resolved runtime jar" in {
-        Given("one resolved dependency jar containing the CNCF runtime descriptor")
-        _with_temp_dir { dir =>
-          val descriptor =
-            """schemaVersion: 1
-              |runtime: cncf
-              |version: 0.5.1-SNAPSHOT
-              |predefinedResults: {}
-              |""".stripMargin
-          val jar = dir.resolve("goldenport-cncf_3-0.5.1-SNAPSHOT.jar")
-          _write_jar_entry(jar, "META-INF/cncf/runtime.yaml", descriptor)
-          val output = dir.resolve("target/cncf-runtime.yaml")
+    "extract the descriptor from the resolved runtime dependency" in {
+      _with_temp_dir { dir =>
+        Given("one resolved dependency represented as a JAR or a class directory with the fixed descriptor resource")
+        val descriptor =
+          """schemaVersion: 1
+            |runtime: cncf
+            |version: 0.5.1-SNAPSHOT
+            |predefinedResults: {}
+            |""".stripMargin
+        val jar = dir.resolve("goldenport-cncf_3-0.5.1-SNAPSHOT.jar")
+        _write_jar_entry(jar, "META-INF/cncf/runtime.yaml", descriptor)
+        val classes = dir.resolve("classes")
+        val resource = classes.resolve("META-INF/cncf/runtime.yaml")
+        Files.createDirectories(resource.getParent)
+        Files.write(resource, descriptor.getBytes(StandardCharsets.UTF_8))
+        val dependencies = Vector(jar, classes)
 
-          When("sbt-cozy prepares delegated generation settings")
-          val extracted = CozyCncfRuntimeDescriptor.extract(Seq(jar.toFile), output.toFile).getOrElse(fail("descriptor was not extracted"))
+        dependencies.zipWithIndex.foreach { case (dependency, index) =>
+          val output = dir.resolve(s"target/cncf-runtime-$index.yaml")
+          When("sbt-cozy prepares delegated generation settings from the selected dependency representation")
+          val extracted = CozyCncfRuntimeDescriptor.extractRequired(Seq(dependency.toFile), output.toFile)
 
-          Then("the exact descriptor and its content fingerprint are available")
-          Files.readString(extracted.path.toPath) shouldBe descriptor
-          extracted.sha256 should have length 64
+          Then("the selected output path contains the exact descriptor bytes")
+          extracted.toPath shouldBe output
+          Files.readString(extracted.toPath, StandardCharsets.UTF_8) shouldBe descriptor
         }
       }
+    }
 
-      "reject multiple runtime descriptors" in {
-        Given("two resolved jars that both claim to be the CNCF runtime")
-        _with_temp_dir { dir =>
-          val first = dir.resolve("cncf-first.jar")
-          val second = dir.resolve("cncf-second.jar")
-          _write_jar_entry(first, "META-INF/cncf/runtime.yaml", "version: first\n")
-          _write_jar_entry(second, "META-INF/cncf/runtime.yaml", "version: second\n")
+    "reject multiple runtime descriptors" in {
+      _with_temp_dir { dir =>
+        Given("distinct resolved JAR or class-directory owners that claim the CNCF runtime, even with equal bytes")
+        val first = dir.resolve("cncf-first.jar")
+        val second = dir.resolve("cncf-second.jar")
+        _write_jar_entry(first, "META-INF/cncf/runtime.yaml", "version: first\n")
+        _write_jar_entry(second, "META-INF/cncf/runtime.yaml", "version: first\n")
+        val classes = dir.resolve("classes")
+        val resource = classes.resolve("META-INF/cncf/runtime.yaml")
+        Files.createDirectories(resource.getParent)
+        Files.write(resource, "version: first\n".getBytes(StandardCharsets.UTF_8))
+        val owners = Vector(Seq(first.toFile, second.toFile), Seq(first.toFile, classes.toFile))
 
+        owners.foreach { dependencies =>
           When("sbt-cozy resolves the selected runtime descriptor")
           val exception = intercept[RuntimeException] {
-            CozyCncfRuntimeDescriptor.extract(Seq(first.toFile, second.toFile), dir.resolve("out.yaml").toFile)
+            CozyCncfRuntimeDescriptor.extract(dependencies, dir.resolve("out.yaml").toFile)
           }
 
           Then("generation fails instead of selecting an arbitrary runtime")
           exception.getMessage should include ("multiple CNCF runtime descriptors resolved")
         }
       }
-
-      "require the descriptor for delegated component generation" in {
-        Given("resolved dependencies without a CNCF runtime descriptor")
-        _with_temp_dir { dir =>
-          val plainjar = dir.resolve("plain-runtime.jar")
-          _write_jar_entry(plainjar, "META-INF/plain.txt", "plain")
-
-          When("sbt-cozy prepares the required runtime contract")
-          val exception = intercept[RuntimeException] {
-            CozyCncfRuntimeDescriptor.extractRequired(Seq(plainjar.toFile), dir.resolve("out.yaml").toFile)
-          }
-
-          Then("generation fails instead of continuing with an empty catalog")
-          exception.getMessage should include ("CNCF runtime descriptor is unavailable")
-        }
-      }
     }
 
+    "require the descriptor for delegated component generation" in {
+      _with_temp_dir { dir =>
+        Given("resolved dependencies without a CNCF runtime descriptor")
+        val plainjar = dir.resolve("plain-runtime.jar")
+        _write_jar_entry(plainjar, "META-INF/plain.txt", "plain")
+
+        When("sbt-cozy prepares the required runtime contract")
+        val exception = intercept[RuntimeException] {
+          CozyCncfRuntimeDescriptor.extractRequired(Seq(plainjar.toFile), dir.resolve("out.yaml").toFile)
+        }
+
+        Then("generation fails instead of continuing with an empty catalog")
+        exception.getMessage should include ("CNCF runtime descriptor is unavailable")
+      }
+    }
     "the default mandatory input" which {
       "retain exact JAR staging when no source file is selected" in {
         Given("one resolved JAR descriptor and no explicit source input")
@@ -87,10 +97,9 @@ final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with
           When("generation requests its mandatory descriptor through the default input")
           val extracted = CozyCncfRuntimeDescriptor.extractRequired(Seq(jar.toFile), output.toFile, None)
 
-          Then("the managed descriptor retains its exact bytes and provenance digest")
-          extracted.path shouldBe output.toFile
+          Then("the managed descriptor retains its exact bytes")
+          extracted shouldBe output.toFile
           Files.readAllBytes(output).toVector shouldBe descriptor.getBytes(StandardCharsets.UTF_8).toVector
-          extracted.sha256 shouldBe _sha256(descriptor.getBytes(StandardCharsets.UTF_8))
         }
       }
 
@@ -132,7 +141,7 @@ final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with
     }
 
     "explicit source input" which {
-      "stage the selected file's exact bytes and provenance digest" in {
+      "stage the selected file's exact bytes" in {
         Given("a prepared UTF-8 source descriptor with non-ASCII text and CRLF line endings")
         _with_temp_dir { dir =>
           val bytes = "schemaVersion: 1\r\nruntime: cncf\r\nlabel: 運用 café 🚀\r\n".getBytes(StandardCharsets.UTF_8)
@@ -143,10 +152,9 @@ final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with
           When("generation selects that source file without a descriptor-bearing dependency")
           val extracted = CozyCncfRuntimeDescriptor.extractRequired(Seq.empty, output.toFile, Some(source.toFile))
 
-          Then("the managed target and fingerprint preserve the source content exactly")
-          extracted.path shouldBe output.toFile
+          Then("the managed target preserve the source content exactly")
+          extracted shouldBe output.toFile
           Files.readAllBytes(output).toVector shouldBe bytes.toVector
-          extracted.sha256 shouldBe _sha256(bytes)
           Files.readAllBytes(source).toVector shouldBe bytes.toVector
         }
       }
@@ -164,9 +172,8 @@ final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with
           When("generation explicitly selects the source descriptor")
           val extracted = CozyCncfRuntimeDescriptor.extractRequired(Seq(jar.toFile), output.toFile, Some(source.toFile))
 
-          Then("the selected source alone determines the staged content and digest")
-          Files.readString(extracted.path.toPath) shouldBe current
-          extracted.sha256 shouldBe _sha256(current.getBytes(StandardCharsets.UTF_8))
+          Then("the selected source alone determines the staged content")
+          Files.readString(extracted.toPath) shouldBe current
         }
       }
 
@@ -254,11 +261,9 @@ final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with
             val explicit = CozyCncfRuntimeDescriptor.extractRequired(Seq.empty, sourceoutput.toFile, Some(source.toFile))
             val resolved = CozyCncfRuntimeDescriptor.extractRequired(Seq(jar.toFile), jaroutput.toFile)
 
-            Then("both transports preserve identical bytes and the same artifact fingerprint")
-            Files.readAllBytes(explicit.path.toPath).toVector shouldBe bytes.toVector
-            Files.readAllBytes(resolved.path.toPath).toVector shouldBe bytes.toVector
-            explicit.sha256 shouldBe resolved.sha256
-            explicit.sha256 shouldBe _sha256(bytes)
+            Then("both transports preserve identical bytes and the selected artifact paths")
+            Files.readAllBytes(explicit.toPath).toVector shouldBe bytes.toVector
+            Files.readAllBytes(resolved.toPath).toVector shouldBe bytes.toVector
             true
           }
         }
@@ -266,14 +271,11 @@ final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with
         When("ScalaCheck evaluates forty generated descriptor bodies")
         val result = Test.check(Test.Parameters.default.withMinSuccessfulTests(40).withWorkers(1), property)
 
-        Then("source-file staging and equivalent JAR staging satisfy the same byte and digest contract")
+        Then("source-file staging and equivalent JAR staging satisfy the same byte contract")
         withClue(result.toString) { result.passed shouldBe true }
       }
     }
   }
-
-  private def _sha256(bytes: Array[Byte]): String =
-    MessageDigest.getInstance("SHA-256").digest(bytes).map(b => f"${b & 0xff}%02x").mkString
 
   private def _write_jar_entry(path: Path, name: String, content: String): Unit = {
     Option(path.getParent).foreach(Files.createDirectories(_))
@@ -288,7 +290,8 @@ final class CozyCncfRuntimeDescriptorSpec extends AnyWordSpec with Matchers with
   }
 
   private def _with_temp_dir[A](f: Path => A): A = {
-    val workroot = Files.createDirectories(Paths.get("target/sbt-cozy-test/work").toAbsolutePath)
+    val workroot = Path.of("target/cozy-cncf-runtime-descriptor-spec/work").toAbsolutePath.normalize()
+    Files.createDirectories(workroot)
     val dir = Files.createTempDirectory(workroot, "sbt-cozy-cncf-runtime-descriptor-")
     try f(dir)
     finally {
