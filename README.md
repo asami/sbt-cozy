@@ -337,7 +337,7 @@ Generate BoK artifact/release metadata from the warehouse:
 sbt cozyIndexWarehouse
 ```
 
-Project-local defaults can be written in `.cozy/config.yaml`. sbt-cozy reads only sbt-adapter settings there, such as source directories, backend selection, publication, distribution, and warehouse settings. Cozy-owned settings such as `generation.versions.*`, CAR packaging policy, dependencies, manifest metadata, runtime compatibility, and catalog updates are interpreted by Cozy itself when sbt-cozy calls the Cozy bridge.
+Shared defaults are read from `conf/cozy/config.yaml`, then overlaid by local defaults in `.cozy/config.yaml`. Either file may be absent, so local-only projects remain supported. Unspecified fields are inherited and local lists replace shared lists (including `[]`). `cozySharedConfigFile` and the existing `cozyConfigFile` select the shared and local files; `show cozyConfigSources` reports existing files in precedence order. sbt-cozy reads only sbt-adapter settings from the merged configuration, such as source directories, backend selection, publication, distribution, and warehouse settings. Cozy-owned settings such as `generation.versions.*`, CAR packaging policy, dependencies, manifest metadata, runtime compatibility, and catalog updates are interpreted by Cozy itself when sbt-cozy calls the Cozy bridge.
 
 ```yaml
 generation:
@@ -384,7 +384,7 @@ local:
   repository: /path/to/local-cncf-repository
 ```
 
-`.cozy/config.yaml` controls generation and publish operation defaults.
+`conf/cozy/config.yaml` plus `.cozy/config.yaml` control generation and publish operation defaults.
 `.cncf/config.yaml` controls runtime lookup and development startup.
 `project.yaml` describes artifact metadata and runtime compatibility.
 Scaffold generation is provided by Cozy directly:

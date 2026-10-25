@@ -9,7 +9,8 @@ import sbt._
 /*
  * @since   Jul. 12, 2026
  *  version Aug.  8, 2026
- * @version Sep. 28, 2026
+ *  version Sep. 28, 2026
+ * @version Oct. 23, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -215,7 +216,7 @@ final class CozyDelegatedGeneratorSpec extends AnyWordSpec with Matchers with Gi
 
         Then("the project-local command is rejected before delegated execution")
         error.getMessage should include(
-          "CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.command"
+          "CAR/SAR delegated generation does not permit Cozy configuration generation.delegate.command"
         )
       }
 

@@ -21,13 +21,26 @@ import scala.sys.process._
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
  *  version Sep. 28, 2026
- * @version Oct. 17, 2026
+ * @version Oct. 23, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
   values: Map[String, String],
   lists: Map[String, Seq[String]]
 ) {
+  def merge(overrideConfig: CozyProjectConfig): CozyProjectConfig = {
+    val authored = overrideConfig.values.keySet ++ overrideConfig.lists.keySet
+    // Some parsed maps retain an authored empty marker alongside their children.
+    // Only leaves replace a subtree; a map marker must preserve shared siblings.
+    val replaced = authored.filterNot(key => authored.exists(_.startsWith(key + ".")))
+    def _retained_(key: String): Boolean =
+      !replaced.exists(path => key == path || key.startsWith(path + ".") || path.startsWith(key + "."))
+    CozyProjectConfig(
+      values.filter { case (key, _) => _retained_(key) } ++ overrideConfig.values,
+      lists.filter { case (key, _) => _retained_(key) } ++ overrideConfig.lists
+    )
+  }
+
   def value(path: String): Option[String] = values.get(path).map(_.trim).filter(_.nonEmpty)
   def isAuthored(path: String): Boolean = values.contains(path) || lists.contains(path)
   def boolean(path: String): Option[Boolean] = value(path).map(_.toLowerCase(java.util.Locale.ROOT)).collect {
@@ -50,6 +63,9 @@ object CozyProjectConfig {
       parse(Files.readAllLines(file.toPath, StandardCharsets.UTF_8).asScala.toSeq)
     else
       empty
+
+  def loadLayers(files: Seq[File]): CozyProjectConfig =
+    files.foldLeft(empty)((config, file) => config.merge(load(file)))
 
   def parse(lines: Seq[String]): CozyProjectConfig = {
     var stack = Vector.empty[(Int, String)]
@@ -78,8 +94,12 @@ object CozyProjectConfig {
             if (rest.isEmpty && _canonical_identity_path(path)) {
               values = values.updated(path, "")
             } else if (rest.isEmpty) {
+              if (path == "publication.local_application_update")
+                values = values.updated(path, "")
               stack = stack :+ (indent -> key)
-            } else
+            } else if (rest == "[]")
+              lists = lists.updated(path, Vector.empty)
+            else
               values = values.updated(path, _scalar(path, rest))
           }
         }
@@ -238,7 +258,7 @@ private[cozy] object CozyGenerationVersionContract {
         sys.error("[sbt-cozy] legacy sbt route is not permitted for CAR/SAR projects.")
       if (command.nonEmpty)
         sys.error(
-          "[sbt-cozy] CAR/SAR delegated generation does not permit project-local .cozy generation.delegate.command."
+          "[sbt-cozy] CAR/SAR delegated generation does not permit Cozy configuration generation.delegate.command."
         )
       version match {
         case Some(exactversion) =>
@@ -615,8 +635,10 @@ object CozyPlugin extends AutoPlugin {
     type CozyCoursierChannelEntry = org.goldenport.cozy.CozyCoursierChannelEntry
     val CozyCoursierChannelEntry = org.goldenport.cozy.CozyCoursierChannelEntry
 
+    val cozySharedConfigFile = settingKey[File]("Shared Cozy config file, normally conf/cozy/config.yaml")
     val cozyConfigFile = settingKey[File]("Project-local Cozy config file, normally .cozy/config.yaml")
-    val cozyProjectConfig = settingKey[CozyProjectConfig]("Parsed project-local Cozy config")
+    val cozyConfigSources = settingKey[Seq[File]]("Existing Cozy config files in shared-to-local precedence order")
+    val cozyProjectConfig = settingKey[CozyProjectConfig]("Merged shared and project-local Cozy config")
     val cozyProjectFile = settingKey[File]("Project publication metadata file, normally project.yaml")
     val cozyProjectMetadata = settingKey[CozyProjectConfig]("Parsed project publication metadata")
     val cozyConfig = settingKey[CozyConfig]("Configuration for sbt-cozy code generation")
@@ -637,6 +659,7 @@ object CozyPlugin extends AutoPlugin {
     val cozyReleaseSourceArchive = taskKey[File]("Stage and strictly verify the opted-in Component release source.")
     val cozyScaladocArchive = taskKey[File]("Generate and stage public Scaladoc for CAR packaging.")
     val cozyRuntimeClasspathFile = taskKey[File]("Write runtime classpath file for direct Java execution.")
+    val cozyCheckInstalledRuntime = taskKey[Unit]("Validate the explicit installed runtime against Compile and Test dependency inputs and prepare its child launcher classpath.")
     val cozyDevelopmentRuntimeManifest = taskKey[File]("Write development runtime admission evidence for a CAR project.")
     val cozyRuntimeEvidenceFiles = taskKey[Seq[File]]("Prepare the complete development runtime evidence set.")
     val cozyPrepareRuntime = taskKey[File]("Compile sample outputs and prepare the complete runtime evidence set.")
@@ -720,10 +743,29 @@ object CozyPlugin extends AutoPlugin {
   override def trigger: PluginTrigger = noTrigger
 
   override lazy val projectSettings: Seq[Def.Setting[_]] = Seq(
+    cozySharedConfigFile := baseDirectory.value / "conf" / "cozy" / "config.yaml",
     cozyConfigFile := baseDirectory.value / ".cozy" / "config.yaml",
-    cozyProjectConfig := CozyProjectConfig.load(cozyConfigFile.value),
+    cozyConfigSources := Seq(cozySharedConfigFile.value, cozyConfigFile.value).filter(_.isFile).distinct,
+    cozyProjectConfig := CozyProjectConfig.loadLayers(cozyConfigSources.value),
     cozyProjectFile := baseDirectory.value / "project.yaml",
     cozyProjectMetadata := CozyProjectConfig.load(cozyProjectFile.value),
+    Compile / dependencyClasspath := InstalledRuntimeClasspath.bind(
+      (Compile / dependencyClasspath).value,
+      InstalledRuntimeClasspath.fromProperties(sys.props.toMap)
+    ),
+    Test / dependencyClasspath := InstalledRuntimeClasspath.bind(
+      (Test / dependencyClasspath).value,
+      InstalledRuntimeClasspath.fromProperties(sys.props.toMap)
+    ),
+    cozyCheckInstalledRuntime := {
+      val compileclasspath = (Compile / dependencyClasspath).value
+      val testclasspath = (Test / dependencyClasspath).value
+      val fullclasspath = (Compile / fullClasspath).value
+      val out = target.value / "cncf.d" / "runtime-classpath.txt"
+      val manifest = InstalledRuntimeClasspath.fromProperties(sys.props.toMap)
+      InstalledRuntimeClasspath.checkAndExport(fullclasspath, compileclasspath, testclasspath, manifest, out)
+      ()
+    },
     cozyConfig := CozyConfig.default,
     cozySourceDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("generation.source_dir")).getOrElse((Compile / sourceDirectory).value / "cozy"),
     cozyTargetDir := _config_file(baseDirectory.value, cozyProjectConfig.value.value("generation.target_dir")).getOrElse((Compile / sourceManaged).value),
@@ -1320,19 +1362,31 @@ object CozyPlugin extends AutoPlugin {
       Def.task {
         val archive = cozyBuildCar.value
         val modelmetadata = Option(target.value / "cozy" / "model-metadata.json").filter(_.isFile)
-        CozySbtBridge.publishCar(
-          projectdir = baseDirectory.value,
-          warehousedir = localwarehouse,
-          name = publication.release.identity.mavenArtifactId(),
-          version = publication.release._release,
-          archive = archive,
-          modelmetadata = modelmetadata,
-          basedir = baseDirectory.value,
-          delegateprojectdir = cozyDelegateProjectDir.value,
-          delegatecommand = cozyDelegateCommand.value,
-          log = streams.value.log
+        val basedir = baseDirectory.value
+        val delegateprojectdir = cozyDelegateProjectDir.value
+        val delegatecommand = cozyDelegateCommand.value
+        val log = streams.value.log
+        val coordinate = publication.release._maven_release_key
+        val prepared = LocalApplicationRuntimeUpdate.prepare(
+          cozyProjectConfig.value, basedir, target.value, archive, coordinate, (Compile / dependencyClasspath).value
         )
-        streams.value.log.info(s"[sbt-cozy] published local Car to ${publication.destination.getAbsolutePath}")
+        val result = LocalApplicationRuntimeUpdate.publish(prepared, coordinate, publication.destination) {
+          CozySbtBridge.publishCar(
+            projectdir = basedir,
+            warehousedir = localwarehouse,
+            name = publication.release.identity.mavenArtifactId(),
+            version = publication.release._release,
+            archive = archive,
+            modelmetadata = modelmetadata,
+            basedir = basedir,
+            delegateprojectdir = delegateprojectdir,
+            delegatecommand = delegatecommand,
+            log = log
+          )
+        }
+        result.evidence.foreach(file => log.info(s"[sbt-cozy] local application publication result: ${file.getAbsolutePath}"))
+        LocalApplicationRuntimeUpdate.requireSuccess(result)
+        log.info(s"[sbt-cozy] published local Car to ${publication.destination.getAbsolutePath}")
         publication.destination
       }
     }.value,
