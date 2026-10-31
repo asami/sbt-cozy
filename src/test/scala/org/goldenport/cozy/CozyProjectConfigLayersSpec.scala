@@ -12,7 +12,7 @@ import CozyPlugin.autoImport._
 
 /** Shared project configuration with local overrides.
   * @since   Oct. 23, 2026
-  * @version Oct. 25, 2026
+  * @version Oct. 31, 2026
   */
 final class CozyProjectConfigLayersSpec extends AnyWordSpec with Matchers with GivenWhenThen {
   "Project configuration layers" should {
@@ -78,16 +78,16 @@ final class CozyProjectConfigLayersSpec extends AnyWordSpec with Matchers with G
     }
 
     "inherit shared siblings when a local map retains an authored marker" in {
-      Given("shared runtime update options and one local option in an authored map")
-      val shared = CozyProjectConfig.parse(Seq("publication:", "  local_application_update:",
-        "    enabled: true", "    registry: shared-registry"))
-      val local = CozyProjectConfig.parse(Seq("publication:", "  local_application_update:",
-        "    registry: local-registry"))
+      Given("shared generation options and a local map with an explicit authored marker")
+      val shared = CozyProjectConfig.parse(Seq("generation:",
+        "  backend: cozy", "  source_dir: src/shared"))
+      val local = CozyProjectConfig(
+        Map("generation" -> "", "generation.source_dir" -> "src/local"), Map.empty)
       When("the local map overlays the shared map")
       val config = shared.merge(local)
       Then("the local option wins while its unspecified shared sibling survives")
-      config.boolean("publication.local_application_update.enabled") shouldBe Some(true)
-      config.value("publication.local_application_update.registry") shouldBe Some("local-registry")
+      config.value("generation.backend") shouldBe Some("cozy")
+      config.value("generation.source_dir") shouldBe Some("src/local")
     }
 
     "retain authored empty identity overrides for existing validation" in {
