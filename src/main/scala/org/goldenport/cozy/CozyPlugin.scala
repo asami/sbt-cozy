@@ -21,7 +21,8 @@ import scala.sys.process._
  *  version Jun. 18, 2026
  *  version Aug.  8, 2026
  *  version Sep. 28, 2026
- * @version Oct. 31, 2026
+ *  version Oct. 31, 2026
+ * @version Nov.  6, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -1294,6 +1295,7 @@ object CozyPlugin extends AutoPlugin {
           version = publication.release._release,
           archive = archive,
           modelmetadata = modelmetadata,
+          localpublication = false,
           basedir = baseDirectory.value,
           delegateprojectdir = cozyDelegateProjectDir.value,
           delegatecommand = cozyDelegateCommand.value,
@@ -1318,6 +1320,7 @@ object CozyPlugin extends AutoPlugin {
           name = artifactname,
           version = version.value,
           archive = archive,
+          localpublication = false,
           basedir = baseDirectory.value,
           delegateprojectdir = cozyDelegateProjectDir.value,
           delegatecommand = cozyDelegateCommand.value,
@@ -1353,6 +1356,7 @@ object CozyPlugin extends AutoPlugin {
           version = publication.release._release,
           archive = archive,
           modelmetadata = modelmetadata,
+          localpublication = true,
           basedir = basedir,
           delegateprojectdir = delegateprojectdir,
           delegatecommand = delegatecommand,
@@ -1376,6 +1380,7 @@ object CozyPlugin extends AutoPlugin {
           name = artifactname,
           version = version.value,
           archive = archive,
+          localpublication = true,
           basedir = baseDirectory.value,
           delegateprojectdir = cozyDelegateProjectDir.value,
           delegatecommand = cozyDelegateCommand.value,
@@ -3878,6 +3883,48 @@ private[cozy] object CozySbtBridge {
     )
   }
 
+  private[cozy] def _publish_car_arguments(
+    projectdir: File,
+    warehousedir: File,
+    name: String,
+    version: String,
+    archive: File,
+    modelmetadata: Option[File],
+    localpublication: Boolean
+  ): Vector[String] =
+    Vector(
+      projectdir.getAbsolutePath,
+      "--warehouse",
+      warehousedir.getAbsolutePath,
+      "--name",
+      name,
+      "--version",
+      version,
+      "--car",
+      archive.getAbsolutePath
+    ) ++ modelmetadata.toVector.flatMap(file => Vector("--model-metadata", file.getAbsolutePath)) ++
+      (if (localpublication) Vector("--local-publication") else Vector.empty)
+
+  private[cozy] def _publish_sar_arguments(
+    projectdir: File,
+    warehousedir: File,
+    name: String,
+    version: String,
+    archive: File,
+    localpublication: Boolean
+  ): Vector[String] =
+    Vector(
+      projectdir.getAbsolutePath,
+      "--warehouse",
+      warehousedir.getAbsolutePath,
+      "--name",
+      name,
+      "--version",
+      version,
+      "--sar",
+      archive.getAbsolutePath
+    ) ++ (if (localpublication) Vector("--local-publication") else Vector.empty)
+
   def publishCar(
     projectdir: File,
     warehousedir: File,
@@ -3885,6 +3932,7 @@ private[cozy] object CozySbtBridge {
     version: String,
     archive: File,
     modelmetadata: Option[File],
+    localpublication: Boolean,
     basedir: File,
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
@@ -3893,18 +3941,7 @@ private[cozy] object CozySbtBridge {
     _run(
       _request(
         action = "publish-car",
-        arguments =
-          Vector(
-            projectdir.getAbsolutePath,
-            "--warehouse",
-            warehousedir.getAbsolutePath,
-            "--name",
-            name,
-            "--version",
-            version,
-            "--car",
-            archive.getAbsolutePath
-          ) ++ modelmetadata.toVector.flatMap(file => Vector("--model-metadata", file.getAbsolutePath))
+        arguments = _publish_car_arguments(projectdir, warehousedir, name, version, archive, modelmetadata, localpublication)
       ),
       basedir,
       delegateprojectdir,
@@ -3919,6 +3956,7 @@ private[cozy] object CozySbtBridge {
     name: String,
     version: String,
     archive: File,
+    localpublication: Boolean,
     basedir: File,
     delegateprojectdir: Option[File],
     delegatecommand: Seq[String],
@@ -3927,18 +3965,7 @@ private[cozy] object CozySbtBridge {
     _run(
       _request(
         action = "publish-sar",
-        arguments =
-          Vector(
-            projectdir.getAbsolutePath,
-            "--warehouse",
-            warehousedir.getAbsolutePath,
-            "--name",
-            name,
-            "--version",
-            version,
-            "--sar",
-            archive.getAbsolutePath
-          )
+        arguments = _publish_sar_arguments(projectdir, warehousedir, name, version, archive, localpublication)
       ),
       basedir,
       delegateprojectdir,

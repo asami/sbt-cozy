@@ -5,7 +5,9 @@ import java.util.zip.ZipFile
 
 import scala.collection.JavaConverters._
 
+import org.scalatest.GivenWhenThen
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers
 import sbt._
 
 /*
@@ -15,7 +17,8 @@ import sbt._
  *  version Apr. 23, 2026
  *  version May. 26, 2026
  *  version Jun. 18, 2026
- * @version Aug.  1, 2026
+ *  version Aug.  1, 2026
+ * @version Nov.  6, 2026
  * @author  ASAMI, Tomoharu
  */
 abstract class CozyTestBase extends AnyFunSuite {
@@ -1022,7 +1025,7 @@ final class CozyManifestMetadataSpec extends CozyTestBase {
   }
 }
 
-final class CozyPackagingSpec extends CozyTestBase {
+final class CozyPackagingSpec extends CozyTestBase with Matchers with GivenWhenThen {
   test("loadSarSources accepts descriptor-only subsystem definition") {
     withTempDir("sbt-cozy-sar-descriptor") { dir =>
       val descriptor = write(dir / "subsystem-descriptor.yaml", "subsystem: textus-identity")
@@ -1054,6 +1057,40 @@ final class CozyPackagingSpec extends CozyTestBase {
       assert(resolved.drop(1).take(2) == Seq("sbt-bridge", "v1"))
       assertBridgeRequestArgument(resolved)
     }
+  }
+
+  test("CAR publication arguments retain model metadata and mark only local publication") {
+    Given("a CAR and its model metadata")
+    val project = new File("project")
+    val warehouse = new File("warehouse")
+    val archive = new File("sample.car")
+    val metadata = new File("model-metadata.json")
+
+    When("the bridge constructs formal and local publication arguments")
+    val formal = CozySbtBridge._publish_car_arguments(project, warehouse, "sample", "1.0", archive, Some(metadata), false)
+    val local = CozySbtBridge._publish_car_arguments(project, warehouse, "sample", "1.0", archive, Some(metadata), true)
+
+    Then("both retain the publication coordinates and metadata, and only local has the flag")
+    formal shouldBe Vector(project.getAbsolutePath, "--warehouse", warehouse.getAbsolutePath,
+      "--name", "sample", "--version", "1.0", "--car", archive.getAbsolutePath,
+      "--model-metadata", metadata.getAbsolutePath)
+    local shouldBe (formal :+ "--local-publication")
+  }
+
+  test("SAR publication arguments mark only local publication") {
+    Given("a SAR and its warehouse")
+    val project = new File("project")
+    val warehouse = new File("warehouse")
+    val archive = new File("sample.sar")
+
+    When("the bridge constructs formal and local publication arguments")
+    val formal = CozySbtBridge._publish_sar_arguments(project, warehouse, "sample", "1.0", archive, false)
+    val local = CozySbtBridge._publish_sar_arguments(project, warehouse, "sample", "1.0", archive, true)
+
+    Then("the formal coordinates are retained and only local has the flag")
+    formal shouldBe Vector(project.getAbsolutePath, "--warehouse", warehouse.getAbsolutePath,
+      "--name", "sample", "--version", "1.0", "--sar", archive.getAbsolutePath)
+    local shouldBe (formal :+ "--local-publication")
   }
 
   test("publishCar delegates warehouse publication to cozy bridge") {
