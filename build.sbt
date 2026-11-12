@@ -41,6 +41,11 @@ lazy val root = (project in file("."))
     sbtPlugin := true,
     scalaVersion := "2.12.20",
     scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
+    Compile / scalafix / unmanagedSources := (Compile / unmanagedSources).value,
+    Compile / scalafix / managedSources := Nil,
+    Test / fork := true,
+    Test / javaOptions += "-Dcozy.overlay.test.classpath=" +
+      (Compile / fullClasspath).value.files.map(_.getAbsolutePath).mkString(java.io.File.pathSeparator),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-core" % "0.14.13",
       "io.circe" %% "circe-parser" % "0.14.13",
@@ -51,3 +56,5 @@ lazy val root = (project in file("."))
     scriptedBufferLog := false,
     scriptedLaunchOpts += s"-Dplugin.version=${version.value}"
   )
+
+addCommandAlias("fixCheck", "Compile / scalafix --check")
