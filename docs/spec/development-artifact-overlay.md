@@ -79,7 +79,8 @@ classpath. No transitive mapping is injected as a direct dependency. Reports
 must identify actual project, configuration, resolved coordinates, classpath
 origins and outcomes; cached copies are acceptable when attributable to the
 selected immutable JAR. Unsupported project references, sbt-plugin/meta-build
-mappings, classifiers and unmanaged JARs are rejected. Builds that replace the plugin validation tasks or compile/test wrappers are unsupported. The initial scope is ordinary JVM
+mappings and unmanaged JARs are rejected. The generator resolution report
+preserves its ordinary and classified artifacts as distinct identities. Builds that replace the plugin validation tasks or compile/test wrappers are unsupported. The initial scope is ordinary JVM
 libraries and Scala-cross modules.
 
 The fixed `smDevelopmentArtifactPublish` task compiles and packages the producer
@@ -97,6 +98,76 @@ change ordinary `publishLocal`.
 The completion record identifies its schema, scope, publication, producer
 selection and actual Ivy coordinates and dependencies. Consumers compare these
 fields against the explicit mapping and descriptor before using the artifact.
+
+## Version 2 batch and generator selection
+
+The in-progress `sbt-cozy.development-artifact.v2` producer retains the same
+envelope and root constraints. Its `producers` array contains explicit `project`,
+`organization`, exact cross-versioned `module`, selected `version`, `jar` and
+`ivy` for every member. Project IDs and module coordinates must be unique.
+Project references are limited to declared projects in the same build. All
+declared projects are packaged before promotion; cross-member metadata binds the
+selected revisions. Each member has a v2 control record and the common record
+at `.batches/<scope>/<publication>/completed.json` is written only after all
+members have been promoted. A consumer verifies the entire declared batch,
+including every member's JAR, descriptor and control, before selecting a member.
+An interrupted publication remains unavailable; reusing its claimed identity is
+not a recovery mechanism.
+
+A v2 consumer can supply a separate `generator` object with `cozyVersion`,
+`modelerVersion`, `batch` and `mappings` using the same mapping fields described
+above. Generator mappings must belong to the named completed v2 batch. The
+versions specify the original Cozy and SimpleModeler roots; selected mappings
+override those exact roots or their development closure. SBT resolves this graph
+separately from the consumer graph. For selected development modules, the
+resolver's JAR is compared with the immutable private publication and the child
+JVM uses the private JAR. Resolution evidence records both the resolver path and
+the launch path. Ordinary modules use their resolved paths.
+
+With both plugins enabled, the selected Cozy path uses the fixed `cozy.Cozy`
+entry point and `sbt-bridge v3 --request` for development generation. The
+selected producer uses one public SBT `DependencyResolution.update`; the v3
+resolution is constructed in memory from that operation and compared with the
+child's `receivedResolution`. The request contains `version`, `action`,
+`selection`, `roots`, `resolution`, `batchRecord`, `arguments` and `settings`.
+The resolution includes request roots, exact overrides, requested configurations,
+public report rows and callers, module and artifact identities, dependency
+edges, ordered runtime artifact keys, producer JVM facts and resolver
+configuration. A key includes selected module, artifact name, type, extension,
+classifier and extra attributes. Report rows preserve actual target revisions,
+eviction and missing-artifact information and resolver names; JavaFX classifier
+artifacts and self-edges remain part of the selected closure. The fixed child
+reports its actual classpath, loaded origins, Cozy and SimpleModeler BuildInfo,
+generation outcome and file inventory. The parent reconciles these with the
+current in-memory producer resolution and actual files.
+
+The v3 batch is the complete immutable publication, recorded at
+`.batches/<scope>/<publication>/completed-v3.json`. Each member supplies a
+module with exact organization, name, selected and base versions, Ivy descriptor
+and v3 control paths, plus all published artifact keys and publication files.
+The control is `completed-v3.json` in the member revision directory. All batch
+members, controls, artifact files and Ivy declarations are checked even when a
+consumer selects only a subset. Consumer resolution artifacts additionally carry
+the actual resolver file, launch file and runtime flag; these are per-operation
+facts and are not fields of the immutable published artifact. Runtime classpath
+order comes from the selected SBT report. Development artifact resolver and
+launch bytes must agree. Ordinary and legacy v1/v2 input behavior remains
+available, and no ordinary baseline resolution is required.
+
+Cozy validates structural consistency and observes the actual child JVM,
+origins, backend and generated files. The SBT adapter owns the public update and
+must correlate its result with that child. A JSON claim alone does not establish
+that SBT performed the update. Internal resolver profile traces and a separate
+effective-POM engine are not required; raw dependency expressions and optional
+diagnostics are not invented. Invalid inputs, inconsistent or incomplete
+batches, resolution conflicts and failed generation fail rather than falling
+back to the ordinary launcher. Selection changes take effect on a new SBT
+invocation or supported reload; removing the property detaches selection on the
+next invocation.
+
+The v3 path is under implementation and remains unqualified. Actual native
+checks, independent review, commit and normal local plugin publication are
+required before delivery; the contract description is not evidence they passed.
 
 ## Qualification
 

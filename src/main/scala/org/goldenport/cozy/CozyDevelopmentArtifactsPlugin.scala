@@ -6,7 +6,7 @@ import sbt.Keys._
 /*
  * Explicit opt-in for task-private development artifact selection.
  * @since   Nov. 12, 2026
- * @version Nov. 12, 2026
+ * @version Nov. 19, 2026
  */
 object CozyDevelopmentArtifactsPlugin extends AutoPlugin {
   object autoImport {
@@ -26,6 +26,15 @@ object CozyDevelopmentArtifactsPlugin extends AutoPlugin {
   private val _selection = SettingKey[Option[CozyDevelopmentArtifactOverlay.Input]]("cozyDevelopmentSelection", "Explicit development artifact input")
   private val _checkcompile = TaskKey[Unit]("cozyDevelopmentCheckCompile", "Validate effective Compile selection before compilation")
   private val _checktest = TaskKey[Unit]("cozyDevelopmentCheckTest", "Validate effective Test selection before test execution")
+  private def _check_project_references(input: CozyDevelopmentArtifactOverlay.Input,
+    project: ResolvedProject, build: java.net.URI): Unit = {
+    val declared = input.producers.map(_.project).toSet
+    val allowed = input.kind == "producer" && declared.nonEmpty && project.dependencies.forall { dependency =>
+      dependency.project.build == build && declared.contains(dependency.project.project)
+    }
+    if (project.dependencies.nonEmpty && !allowed)
+      sys.error("[sbt-cozy artifact] project references must belong to the declared producer set")
+  }
   override def requires: Plugins = plugins.JvmPlugin
   override def trigger: PluginTrigger = noTrigger
 
@@ -54,11 +63,12 @@ object CozyDevelopmentArtifactsPlugin extends AutoPlugin {
       val fullversion = scalaVersion.value
       val binaryversion = scalaBinaryVersion.value
       val project = thisProject.value
+      val build = thisProjectRef.value.build
       val isplugin = sbtPlugin.value
       input.foreach { value =>
         if (isplugin) sys.error("[sbt-cozy artifact] sbt-plugin projects are unsupported")
         if (unmanaged.nonEmpty) sys.error("[sbt-cozy artifact] unmanaged JARs are unsupported with explicit selection")
-        if (project.dependencies.nonEmpty) sys.error("[sbt-cozy artifact] project references are unsupported")
+        _check_project_references(value, project, build)
         CozyDevelopmentArtifactOverlay.validateSettings(value, expected, overrides, repositories, fullversion, binaryversion)
         CozyDevelopmentArtifactOverlay.validateClasspath(value, report, classpath.map(_.data), "Compile")
       }
@@ -75,11 +85,12 @@ object CozyDevelopmentArtifactsPlugin extends AutoPlugin {
       val fullversion = scalaVersion.value
       val binaryversion = scalaBinaryVersion.value
       val project = thisProject.value
+      val build = thisProjectRef.value.build
       val isplugin = sbtPlugin.value
       input.foreach { value =>
         if (isplugin) sys.error("[sbt-cozy artifact] sbt-plugin projects are unsupported")
         if (unmanaged.nonEmpty) sys.error("[sbt-cozy artifact] unmanaged JARs are unsupported with explicit selection")
-        if (project.dependencies.nonEmpty) sys.error("[sbt-cozy artifact] project references are unsupported")
+        _check_project_references(value, project, build)
         CozyDevelopmentArtifactOverlay.validateSettings(value, expected, overrides, repositories, fullversion, binaryversion)
         CozyDevelopmentArtifactOverlay.validateClasspath(value, report, classpath.map(_.data), "Test")
       }
@@ -123,13 +134,41 @@ object CozyDevelopmentArtifactsPlugin extends AutoPlugin {
       input.filter(_.kind == "consumer").foreach(value =>
         CozyDevelopmentArtifactOverlay.record(value, report, classpath, project.id, "Test"))
     },
-    smDevelopmentArtifactPublish := {
+    smDevelopmentArtifactPublish := Def.taskDyn {
       val input = _selection.value.getOrElse(sys.error("smDevelopmentArtifactPublish requires sm.artifact.selection"))
-      val project = projectID.value
-      val modulename = CrossVersion(project.crossVersion, scalaVersion.value, scalaBinaryVersion.value).
-        map(_(project.name)).getOrElse(project.name)
-      CozyDevelopmentArtifactOverlay.publish(input, (Compile / packageBin).value, makeIvyXml.value,
-        project.organization, modulename, project.revision, update.value)
-    }
+      val build = thisProjectRef.value.build
+      if (input.producers.nonEmpty) {
+        val tasks = input.producers.map { declared =>
+          val ref = ProjectRef(build, declared.project)
+          Def.task {
+            val project = (ref / projectID).value
+            val structure = (ref / thisProject).value
+            val fullversion = (ref / scalaVersion).value
+            val binaryversion = (ref / scalaBinaryVersion).value
+            val crossname = CrossVersion(project.crossVersion, fullversion, binaryversion)
+            val modulename = crossname.fold(project.name)(_(project.name))
+            _check_project_references(input, structure, build)
+            CozyDevelopmentArtifactOverlay.BatchMember(declared.producer, (ref / Compile / packageBin).value,
+              (ref / makeIvyXml).value, project.organization, modulename, project.revision, (ref / update).value,
+              (ref / packagedArtifacts).value.toVector, crossname)
+          }
+        }
+        val empty: Def.Initialize[Task[Vector[CozyDevelopmentArtifactOverlay.BatchMember]]] =
+          Def.task { Vector.empty[CozyDevelopmentArtifactOverlay.BatchMember] }
+        val joined = tasks.foldLeft(empty) { (acc, task) =>
+          Def.task { acc.value :+ task.value }
+        }
+        Def.task {
+          val members = joined.value
+          CozyDevelopmentArtifactOverlay.publishBatch(input, members).head
+        }
+      } else Def.task {
+        val project = projectID.value
+        val modulename = CrossVersion(project.crossVersion, scalaVersion.value, scalaBinaryVersion.value).
+          map(_(project.name)).getOrElse(project.name)
+        CozyDevelopmentArtifactOverlay.publish(input, (Compile / packageBin).value, makeIvyXml.value,
+          project.organization, modulename, project.revision, update.value)
+      }
+    }.value
   )
 }

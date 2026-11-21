@@ -22,7 +22,7 @@ import scala.sys.process._
  *  version Aug.  8, 2026
  *  version Sep. 28, 2026
  *  version Oct. 31, 2026
- * @version Nov. 12, 2026
+ * @version Nov. 19, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -862,6 +862,13 @@ object CozyPlugin extends AutoPlugin {
       cozyProjectConfig.value.value("review.cozy.provider_version")
         .orElse(cozyProjectMetadata.value.value("review.cozy.provider_version")),
     cozyGenerate := {
+      val selection = if (thisProject.value.autoPlugins.contains(CozyDevelopmentArtifactsPlugin))
+        sys.props.get("sm.artifact.selection").map(path => CozyDevelopmentArtifactOverlay.read(file(path), (LocalRootProject / baseDirectory).value))
+      else None
+      val generatorselection = selection.filter(_.generator.nonEmpty)
+      val dependencyresolver = dependencyResolution.value
+      val updateconfig = updateConfiguration.value
+      val unresolved = (update / unresolvedWarningConfiguration).value
       val sourcedir = cozySourceDir.value
       val targetdir = cozyTargetDir.value
       val config = cozyConfig.value
@@ -881,7 +888,7 @@ object CozyPlugin extends AutoPlugin {
         configuredversion ++ cozyGenerationVersionOverrides.value,
         generationtarget
       )
-      val skipunchanged = cozySkipUnchangedGeneration.value &&
+      val skipunchanged = generatorselection.isEmpty && cozySkipUnchangedGeneration.value &&
         generationversions.contains(CozyGenerationVersionContract.COZY_VERSION_KEY)
       val log = streams.value.log
 
@@ -941,7 +948,12 @@ object CozyPlugin extends AutoPlugin {
             if (config != CozyConfig.default) {
               log.warn("[sbt-cozy] cozy backend ignores cozyConfig options; using cozy modeler defaults")
             }
-            val generated = CozyDelegatedGenerator.generate(
+            val generated = generatorselection match {
+              case Some(input) =>
+                val resolved = CozyDevelopmentArtifactOverlay.resolveGenerator(input, dependencyresolver, updateconfig, unresolved, log)
+                CozyDelegatedGenerator.generateSelected(input, resolved, sourcedir, cozyfiles, targetdir,
+                  target.value, baseDirectory.value, generationversionoverrides, log)
+              case None => CozyDelegatedGenerator.generate(
               sourcedir = sourcedir,
               cozyfiles = cozyfiles,
               targetdir = targetdir,
@@ -952,9 +964,12 @@ object CozyPlugin extends AutoPlugin {
               settings = generationversionoverrides,
               log = log
             )
-            CozyGenerationState.write(statefile, currentinputs)
+            }
+            if (generatorselection.nonEmpty) IO.delete(statefile)
+            else CozyGenerationState.write(statefile, currentinputs)
             generated
           case "legacy" =>
+            if (generatorselection.nonEmpty) sys.error("[sbt-cozy] selected development generation requires the cozy backend")
             CozyRuntimeAbiResources.clear(target.value)
             val model = _parse_validated_model(cozyfiles)
             val generated = CozyGenerator.generate(model, targetdir, config)
@@ -3084,6 +3099,43 @@ private[cozy] object CozyDelegatedGenerator {
 
   def generatedFiles(targetdir: File): Seq[File] =
     (targetdir ** "*.scala").get.filter(_.isFile).sortBy(_.getAbsolutePath)
+
+  def generateSelected(input: CozyDevelopmentArtifactOverlay.Input,
+    resolved: CozyDevelopmentArtifactOverlay.GeneratorResolution, sourcedir: File, cozyfiles: Seq[File],
+    targetdir: File, targetbasedir: File, basedir: File, settings: Map[String, String], log: Logger): Seq[File] = {
+    val workdir = targetbasedir / "sbt-cozy" / "development-generation" / input.selection
+    val resultdir = targetbasedir / "sbt-cozy" / "development-results" / input.selection
+    val manifestfile = targetbasedir / _manifest_relative_path
+    CozyDevelopmentArtifactOverlay.validateGenerationPaths(input, Seq(workdir, resultdir, targetdir, manifestfile))
+    _cleanup_previous_generated_files(manifestfile)
+    IO.delete(workdir)
+    IO.delete(resultdir)
+    IO.createDirectory(workdir)
+    IO.createDirectory(resultdir)
+    IO.createDirectory(targetdir)
+    val results = cozyfiles.zipWithIndex.map { case (source, index) =>
+      val output = workdir / s"run-$index"
+      val result = resultdir / s"run-$index.json"
+      val files = CozyDevelopmentArtifactOverlay.runGenerator(input, resolved, sourcedir, source, output, result, settings, log)
+      val generated = files.filter(file => file.getName.endsWith(".scala") &&
+        file.getAbsolutePath.replace('\\', '/').contains(_source_marker)).map { file =>
+        val relative = _relative_from_generated_root(file, _source_marker).getOrElse(file.getName)
+        installGeneratedSource(file, targetdir, relative, _relative_from_generated_root(file, _legacy_source_marker))
+      }
+      result -> generated
+    }
+    val generated = results.flatMap(_._2).groupBy(_.getAbsolutePath).values.map(_.last).toVector.sortBy(_.getAbsolutePath)
+    if (generated.isEmpty) sys.error("[sbt-cozy] selected generator returned no managed Scala sources")
+    installComponentApiDescriptor(workdir, targetbasedir)
+    installModelMetadata(workdir, targetbasedir)
+    CozyRuntimeAbiResources.install(workdir, targetbasedir)
+    val java = new File(new File(System.getProperty("java.home"), "bin"), "java")
+    val command = Vector(java.getAbsolutePath, "-cp", resolved.classpath.map(_.getAbsolutePath).mkString(_root_.java.io.File.pathSeparator), "cozy.Cozy")
+    installGenerationProvenance(workdir, targetbasedir, basedir, None, command, log)
+    _write_generated_manifest(manifestfile, generated)
+    CozyDevelopmentArtifactOverlay.recordGeneration(input, results.map(_._1), generated)
+    generated
+  }
 
   def generate(
     sourcedir: File,
