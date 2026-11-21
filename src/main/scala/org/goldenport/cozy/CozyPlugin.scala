@@ -22,7 +22,7 @@ import scala.sys.process._
  *  version Aug.  8, 2026
  *  version Sep. 28, 2026
  *  version Oct. 31, 2026
- * @version Nov.  6, 2026
+ * @version Nov. 12, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class CozyProjectConfig(
@@ -737,7 +737,7 @@ object CozyPlugin extends AutoPlugin {
   private[cozy] val _cncf_runtime_descriptor_selection =
     TaskKey[Option[File]]("cozyCncfRuntimeDescriptorSelection", "Select CNCF runtime descriptor preparation for nonempty cozy component sources.")
 
-  override def requires: Plugins = plugins.JvmPlugin
+  override def requires: Plugins = plugins.JvmPlugin && CozyDevelopmentArtifactsPlugin
   override def trigger: PluginTrigger = noTrigger
 
   override lazy val projectSettings: Seq[Def.Setting[_]] = Seq(
